@@ -171,8 +171,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         pass  # Suppress excessive HTTP access logs
 
 def start_health_server():
-    """Starts background HTTP server on the cloud assigned PORT (default 8080)."""
-    port = int(os.getenv("PORT", "8080"))
+    """Starts background HTTP server on the cloud assigned PORT (default 10000)."""
+    port = int(os.getenv("PORT", "10000"))
     try:
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -182,15 +182,15 @@ def start_health_server():
         logger.warning(f"Could not start health check server on port {port}: {e}")
 
 def main():
+    # Start health check server for Render/Koyeb 24/7 uptime
+    start_health_server()
+
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("\n" + "="*60)
         print("⚠️  ERROR: BOT_TOKEN is not configured!")
         print("Please edit .env or set BOT_TOKEN in config.py with your token from @BotFather.")
         print("="*60 + "\n")
         sys.exit(1)
-
-    # Start health check server for Render/Koyeb 24/7 uptime
-    start_health_server()
 
     # Initialize database
     init_db()

@@ -8,12 +8,11 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 # --- Telegram Bot Credentials ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-SUPERGROUP_CHAT_ID = int(os.getenv("SUPERGROUP_CHAT_ID", "0"))  # e.g. -1001234567890
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8891345663:AAGdwG2CDqOPwXBou-reFvDWf8ZBsrMmwWM")
+SUPERGROUP_CHAT_ID = int(os.getenv("SUPERGROUP_CHAT_ID", "-1004307508548"))
 
 # --- Admin Telegram User IDs (for access control & approvals) ---
-# Format in .env: ADMIN_IDS=12345678,87654321
-raw_admin_ids = os.getenv("ADMIN_IDS", "")
+raw_admin_ids = os.getenv("ADMIN_IDS", "1602040402")
 ADMIN_IDS = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
 
 # Whether new workers require manager approval before they can submit reports
@@ -29,19 +28,17 @@ NIGHT_CUTOFF_MINUTE = int(os.getenv("NIGHT_CUTOFF_MINUTE", "0"))
 TIMEZONE_STR = os.getenv("TIMEZONE", "Africa/Addis_Ababa")
 
 # --- Telegram Supergroup Forum Topic Thread IDs ---
-# Map project names to their respective forum Topic Thread IDs in Telegram.
-# thread_id: 0 or None means general topic / main group chat.
 DEFAULT_PROJECTS = {
-    "Project Alpha": int(os.getenv("TOPIC_PROJECT_ALPHA", "0")),
-    "Project Beta": int(os.getenv("TOPIC_PROJECT_BETA", "0")),
-    "Project Gamma": int(os.getenv("TOPIC_PROJECT_GAMMA", "0")),
+    "Project Alpha": int(os.getenv("TOPIC_PROJECT_ALPHA", "7")),
+    "Project Beta": int(os.getenv("TOPIC_PROJECT_BETA", "9")),
+    "Project Gamma": int(os.getenv("TOPIC_PROJECT_GAMMA", "10")),
 }
 
-# Dedicated Topic for Material Requisitions (if 0, posts to the specific project topic)
-MATERIALS_TOPIC_ID = int(os.getenv("TOPIC_MATERIALS", "0"))
+# Dedicated Topic for Material Requisitions
+MATERIALS_TOPIC_ID = int(os.getenv("TOPIC_MATERIALS", "13"))
 
 # Dedicated Topic for Urgent Alerts / Issues
-ISSUES_TOPIC_ID = int(os.getenv("TOPIC_ISSUES", "0"))
+ISSUES_TOPIC_ID = int(os.getenv("TOPIC_ISSUES", "16"))
 
 # --- Database & Storage ---
 DB_PATH = BASE_DIR / "site_manager.db"

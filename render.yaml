@@ -8,15 +8,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: PORT
+        value: 10000
       - key: BOT_TOKEN
-        sync: false
+        value: 8891345663:AAGdwG2CDqOPwXBou-reFvDWf8ZBsrMmwWM
       - key: SUPERGROUP_CHAT_ID
-        sync: false
+        value: "-1004307508548"
       - key: ADMIN_IDS
-        sync: false
+        value: "1602040402"
       - key: REQUIRE_APPROVAL
         value: "True"
       - key: TIMEZONE
         value: "Africa/Addis_Ababa"
       - key: GOOGLE_SHEET_WEBHOOK_URL
-        sync: false
+        value: "https://script.google.com/macros/s/AKfycbzAsdxZXnjBbiuHdy_VO8ukSLaWKIxLLkuALy6fjZ5Yk0jRJ5g9FyIWQh19K_3qscYqBg/exec"
