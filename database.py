@@ -175,7 +175,7 @@ def init_db():
         """)
     else:
         # SQLite schema
-        cursor.execute("""
+        cursor.executescript("""
         CREATE TABLE IF NOT EXISTS workers (
             user_id INTEGER PRIMARY KEY,
             full_name TEXT NOT NULL,
