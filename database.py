@@ -107,7 +107,8 @@ def init_db():
             is_approved INTEGER DEFAULT 0,
             is_admin INTEGER DEFAULT 0,
             assigned_project TEXT DEFAULT 'ALL',
-            registered_at TEXT
+            registered_at TEXT,
+            language TEXT DEFAULT 'en'
         );
 
         CREATE TABLE IF NOT EXISTS reports (
@@ -184,7 +185,8 @@ def init_db():
             is_approved INTEGER DEFAULT 0,
             is_admin INTEGER DEFAULT 0,
             assigned_project TEXT DEFAULT 'ALL',
-            registered_at TEXT
+            registered_at TEXT,
+            language TEXT DEFAULT 'en'
         );
 
         CREATE TABLE IF NOT EXISTS reports (
@@ -255,6 +257,11 @@ def init_db():
         """)
 
         # Auto-migration for existing SQLite files
+        cursor.execute("PRAGMA table_info(workers)")
+        worker_cols = [row[1] for row in cursor.fetchall()]
+        if "language" not in worker_cols:
+            cursor.execute("ALTER TABLE workers ADD COLUMN language TEXT DEFAULT 'en'")
+
         cursor.execute("PRAGMA table_info(reports)")
         columns = [row[1] for row in cursor.fetchall()]
         if "shift_type" not in columns:
@@ -298,17 +305,27 @@ def set_setting(key: str, value: str) -> None:
 def get_worker(user_id: int) -> Optional[Dict[str, Any]]:
     return db_fetchone("SELECT * FROM workers WHERE user_id = ?", (user_id,))
 
-def register_worker(user_id: int, full_name: str, role: str, is_approved: bool = False, is_admin: bool = False) -> None:
+def get_worker_lang(user_id: int) -> str:
+    row = db_fetchone("SELECT language FROM workers WHERE user_id = ?", (user_id,))
+    if row and row.get("language"):
+        return row["language"]
+    return "en"
+
+def set_worker_lang(user_id: int, lang: str) -> None:
+    db_execute("UPDATE workers SET language = ? WHERE user_id = ?", (lang, user_id))
+
+def register_worker(user_id: int, full_name: str, role: str, is_approved: bool = False, is_admin: bool = False, language: str = "en") -> None:
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db_execute("""
-    INSERT INTO workers (user_id, full_name, role, is_approved, is_admin, registered_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO workers (user_id, full_name, role, is_approved, is_admin, registered_at, language)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
         full_name = excluded.full_name,
         role = excluded.role,
         is_approved = excluded.is_approved,
-        is_admin = excluded.is_admin
-    """, (user_id, full_name, role, 1 if is_approved else 0, 1 if is_admin else 0, now_str))
+        is_admin = excluded.is_admin,
+        language = COALESCE(excluded.language, workers.language)
+    """, (user_id, full_name, role, 1 if is_approved else 0, 1 if is_admin else 0, now_str, language))
 
 def set_worker_approval(user_id: int, approved: bool) -> bool:
     count = db_execute("UPDATE workers SET is_approved = ? WHERE user_id = ?", (1 if approved else 0, user_id))

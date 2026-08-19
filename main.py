@@ -37,6 +37,8 @@ from handlers.auth import (
     handle_worker_approval_callback,
     menu_command,
     profile_command,
+    language_command,
+    language_callback_handler,
 )
 from handlers.report import (
     get_report_handler,
@@ -113,6 +115,7 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("status", "📊 View Project Snapshot & Progress Bar"),
         BotCommand("progress", "📈 Update/View Project Completion (%)"),
         BotCommand("projects", "🏗️ List Active Projects & Deadlines"),
+        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
         BotCommand("admin", "🎛️ Manager Controller Board"),
     ]
 
@@ -126,6 +129,7 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("progress", "📈 Update Project Progress"),
         BotCommand("projects", "🏗️ Active Projects & Deadlines"),
         BotCommand("profile", "👤 View My Worker Profile & Status"),
+        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
         BotCommand("admin", "🎛️ Manager Control Dashboard"),
         BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
         BotCommand("export_sheets", "📥 Download Excel Export"),
@@ -141,6 +145,7 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("status", "📊 Project Snapshot Dashboard"),
         BotCommand("progress", "📈 Update/View Completion (%)"),
         BotCommand("projects", "🏗️ List Active Projects & Deadlines"),
+        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
         BotCommand("create_project", "➕ Create New Project & Forum Topic"),
         BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
         BotCommand("export_sheets", "📥 Download Master Excel Spreadsheet"),
@@ -228,35 +233,42 @@ def main():
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
 
-    # 4. Status Command (/status and reply buttons)
+    # 4. Status Command (/status and reply buttons in EN, AM, OM)
     application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^📊 Project Status$"), status_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(📊 Project Status|📊 የፕሮጀክት ሁኔታ|📊 Haala Piroojektii)$"), status_command))
     application.add_handler(CallbackQueryHandler(status_callback, pattern=r"^status_"))
 
     # 5. Project Creation Wizard with Deadline & Progress Wizard
     application.add_handler(get_create_project_wizard_handler())
     application.add_handler(get_progress_update_wizard_handler())
 
-    # 6. Navigation, Profile, & Menu Commands (/menu, /profile, /help)
+    # 6. Language Selection & Switching (/language, /lang, and buttons)
+    application.add_handler(CommandHandler("language", language_command))
+    application.add_handler(CommandHandler("lang", language_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(🌐 Language|🌐 ቋንቋ|🌐 Afaan)"), language_command))
+    application.add_handler(CallbackQueryHandler(language_callback_handler, pattern=r"^(setlang_|lang_)"))
+    application.add_handler(CallbackQueryHandler(language_command, pattern=r"^menu_language$"))
+
+    # 7. Navigation, Profile, & Menu Commands (/menu, /profile, /help)
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("help", menu_command))
     application.add_handler(CommandHandler("profile", profile_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^📱 Main Menu$"), menu_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(📱 Main Menu|📱 ዋና ማውጫ|📱 Baafata Guddaa)$"), menu_command))
 
-    # 7. Admin Controller Board & Management Commands
+    # 8. Admin Controller Board & Management Commands
     application.add_handler(CommandHandler("admin", admin_panel_command))
     application.add_handler(CommandHandler("control", admin_panel_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^🎛️ Manager Panel$"), admin_panel_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(🎛️ Manager Panel|🎛️ የአስተዳዳሪ ሰሌዳ|🎛️ Gabatee Gaggeessaa)$"), admin_panel_command))
     application.add_handler(CallbackQueryHandler(admin_panel_callback_handler, pattern=r"^(admin_|menu_)"))
 
     application.add_handler(CommandHandler("sync_sheets", sync_sheets_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^🔄 Sync Sheets$"), sync_sheets_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(🔄 Sync Sheets|🔄 ጉግል ሺት አመሳስል|🔄 Google Sheets Wal-simsiisi)$"), sync_sheets_command))
 
     application.add_handler(CommandHandler("export_sheets", export_sheets_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^📥 Export Excel$"), export_sheets_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(📥 Export Excel|📥 ኤክሴል አውርድ|📥 Excel Buusi)$"), export_sheets_command))
 
     application.add_handler(CommandHandler("projects", list_projects_command))
-    application.add_handler(MessageHandler(filters.Regex(r"^🏗️ (Projects|All Projects)$"), list_projects_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(🏗️ (Projects|All Projects)|🏗️ ሁሉም ፕሮጀክቶች|🏗️ Piroojektii Hundaa)$"), list_projects_command))
 
     application.add_handler(CommandHandler("workers", list_workers_command))
     application.add_handler(CommandHandler("approve_worker", approve_worker_command))
@@ -266,10 +278,10 @@ def main():
     application.add_handler(CommandHandler("check_reports", manual_check_reports_command))
     application.add_handler(CommandHandler("weekly_report", weekly_report_command))
 
-    # 8. Scheduled Cutoff Reminders (Day: 19:00, Night: 07:00)
+    # 9. Scheduled Cutoff Reminders (Day: 19:00, Night: 07:00, Weekly Digest: Sun 20:00)
     setup_cutoff_scheduler(application)
 
-    # 9. Register Global Error Handler for Automatic Reconnects
+    # 10. Register Global Error Handler for Automatic Reconnects
     application.add_error_handler(error_handler)
 
     print("🚀 Site Management Bot is starting up...")

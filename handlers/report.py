@@ -22,6 +22,7 @@ from database import (
 )
 from google_sheets import append_report_live, update_project_live
 from handlers.auth import is_authorized
+from locales import t, get_user_lang
 
 logger = logging.getLogger(__name__)
 
@@ -464,8 +465,8 @@ def get_report_handler() -> ConversationHandler:
             CommandHandler("report", report_start),
             CommandHandler("day_report", report_start),
             CommandHandler("night_report", night_report_start),
-            MessageHandler(filters.Regex(r"^☀️ Day Report$"), report_start),
-            MessageHandler(filters.Regex(r"^🌙 Night Report$"), night_report_start),
+            MessageHandler(filters.Regex(r"^(☀️ Day Report|☀️ የቀን ሪፖርት|☀️ Gabaasa Guyyaa)$"), report_start),
+            MessageHandler(filters.Regex(r"^(🌙 Night Report|🌙 የማታ ሪፖርት|🌙 Gabaasa Halkan)$"), night_report_start),
             CallbackQueryHandler(report_start, pattern=r"^menu_day_report$"),
             CallbackQueryHandler(night_report_start, pattern=r"^menu_night_report$"),
             CallbackQueryHandler(project_selected_callback, pattern=r"^rep_proj_"),

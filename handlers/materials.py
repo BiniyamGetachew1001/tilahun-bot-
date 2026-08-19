@@ -413,7 +413,7 @@ def get_material_request_handler() -> ConversationHandler:
         entry_points=[
             CommandHandler("request_material", mr_start),
             CommandHandler("materials", mr_start),
-            MessageHandler(filters.Regex(r"^📦 Request Material$"), mr_start),
+            MessageHandler(filters.Regex(r"^(📦 Request Material|📦 ዕቃ ማዘዣ|📦 Gaaffii Meeshaa)$"), mr_start),
             CallbackQueryHandler(mr_start, pattern=r"^menu_materials$"),
             CallbackQueryHandler(mr_project_selected, pattern=r"^mr_proj_"),
         ],
