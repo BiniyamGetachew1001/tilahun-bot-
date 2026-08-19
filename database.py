@@ -1,169 +1,306 @@
+import os
 import sqlite3
 import datetime
+import logging
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from config import DB_PATH, DEFAULT_PROJECTS, ADMIN_IDS
+from config import DB_PATH, DEFAULT_PROJECTS, ADMIN_IDS, DATABASE_URL
 
-def get_db_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
+logger = logging.getLogger(__name__)
 
-def init_db():
-    """Initializes SQLite database tables if they do not exist."""
+USE_POSTGRES = bool(DATABASE_URL and (DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")))
+
+if USE_POSTGRES:
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        logger.info("🐘 Using Cloud PostgreSQL Database for persistent storage.")
+    except ImportError:
+        logger.warning("psycopg2 not installed; falling back to SQLite.")
+        USE_POSTGRES = False
+
+def get_db_connection():
+    if USE_POSTGRES:
+        url = DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(url)
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        return conn
+
+def _format_sql(sql: str) -> str:
+    """If Postgres, converts '?' placeholders to '%s'."""
+    if USE_POSTGRES:
+        return sql.replace("?", "%s")
+    return sql
+
+def db_execute(sql: str, params: tuple = (), returning_id: bool = False):
     conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # 1. Workers table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS workers (
-        user_id INTEGER PRIMARY KEY,
-        full_name TEXT NOT NULL,
-        role TEXT NOT NULL,
-        phone TEXT,
-        is_approved INTEGER DEFAULT 0,
-        is_admin INTEGER DEFAULT 0,
-        assigned_project TEXT DEFAULT 'ALL',
-        registered_at TEXT
-    )
-    """)
-
-    # 2. Reports table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS reports (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        date_str TEXT NOT NULL,
-        shift_type TEXT DEFAULT 'DAY',
-        project_name TEXT NOT NULL,
-        worker_user_id INTEGER NOT NULL,
-        worker_name TEXT NOT NULL,
-        worker_role TEXT NOT NULL,
-        work_completed TEXT NOT NULL,
-        plan_tomorrow TEXT NOT NULL,
-        blockers TEXT,
-        photo_file_ids TEXT,
-        message_id INTEGER,
-        FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
-    )
-    """)
-
-    # Auto-migration: Ensure shift_type column exists if table was created previously
-    cursor.execute("PRAGMA table_info(reports)")
-    columns = [row[1] for row in cursor.fetchall()]
-    if "shift_type" not in columns:
-        cursor.execute("ALTER TABLE reports ADD COLUMN shift_type TEXT DEFAULT 'DAY'")
-
-    # 3. Material Requests table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS material_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        mr_code TEXT UNIQUE NOT NULL,
-        timestamp TEXT NOT NULL,
-        date_str TEXT NOT NULL,
-        project_name TEXT NOT NULL,
-        worker_user_id INTEGER NOT NULL,
-        worker_name TEXT NOT NULL,
-        worker_role TEXT NOT NULL,
-        items_description TEXT NOT NULL,
-        urgency TEXT NOT NULL,
-        status TEXT DEFAULT 'PENDING',
-        approved_by_name TEXT,
-        approved_by_id INTEGER,
-        updated_at TEXT,
-        notes TEXT,
-        message_id INTEGER,
-        topic_id INTEGER,
-        FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
-    )
-    """)
-
-    # 4. Issues table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS issues (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        date_str TEXT NOT NULL,
-        project_name TEXT NOT NULL,
-        worker_user_id INTEGER NOT NULL,
-        worker_name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        severity TEXT DEFAULT 'NORMAL',
-        status TEXT DEFAULT 'OPEN',
-        resolved_at TEXT,
-        FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
-    )
-    """)
-
-    # 5. Projects table
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS projects (
-        name TEXT PRIMARY KEY,
-        topic_id INTEGER DEFAULT 0,
-        deadline TEXT,
-        progress_percent INTEGER DEFAULT 0,
-        created_at TEXT,
-        is_active INTEGER DEFAULT 1
-    )
-    """)
-
-    # Auto-migration for projects table columns
-    cursor.execute("PRAGMA table_info(projects)")
-    proj_cols = [row[1] for row in cursor.fetchall()]
-    if "deadline" not in proj_cols:
-        cursor.execute("ALTER TABLE projects ADD COLUMN deadline TEXT")
-    if "progress_percent" not in proj_cols:
-        cursor.execute("ALTER TABLE projects ADD COLUMN progress_percent INTEGER DEFAULT 0")
-    if "created_at" not in proj_cols:
-        cursor.execute("ALTER TABLE projects ADD COLUMN created_at TEXT")
-
-    # 6. Settings table (for dynamic configuration like topic IDs)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    )
-    """)
+    formatted_sql = _format_sql(sql)
+    
+    if USE_POSTGRES:
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        if returning_id:
+            if not formatted_sql.strip().upper().endswith("RETURNING ID") and "INSERT INTO" in formatted_sql.upper():
+                formatted_sql = formatted_sql.rstrip(" ;") + " RETURNING id;"
+            cursor.execute(formatted_sql, params)
+            row = cursor.fetchone()
+            last_id = row["id"] if isinstance(row, dict) else row[0]
+        else:
+            cursor.execute(formatted_sql, params)
+            last_id = None
+        rowcount = cursor.rowcount
+    else:
+        cursor = conn.cursor()
+        cursor.execute(formatted_sql, params)
+        last_id = cursor.lastrowid
+        rowcount = cursor.rowcount
 
     conn.commit()
     conn.close()
+    return last_id if returning_id else rowcount
+
+def db_fetchone(sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    if USE_POSTGRES:
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    else:
+        cursor = conn.cursor()
+
+    cursor.execute(_format_sql(sql), params)
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return dict(row)
+
+def db_fetchall(sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    if USE_POSTGRES:
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    else:
+        cursor = conn.cursor()
+
+    cursor.execute(_format_sql(sql), params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def init_db():
+    """Initializes database tables if they do not exist."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if USE_POSTGRES:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workers (
+            user_id BIGINT PRIMARY KEY,
+            full_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            phone TEXT,
+            is_approved INTEGER DEFAULT 0,
+            is_admin INTEGER DEFAULT 0,
+            assigned_project TEXT DEFAULT 'ALL',
+            registered_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS reports (
+            id SERIAL PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            shift_type TEXT DEFAULT 'DAY',
+            project_name TEXT NOT NULL,
+            worker_user_id BIGINT NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            work_completed TEXT NOT NULL,
+            plan_tomorrow TEXT NOT NULL,
+            blockers TEXT,
+            photo_file_ids TEXT,
+            message_id BIGINT
+        );
+
+        CREATE TABLE IF NOT EXISTS material_requests (
+            id SERIAL PRIMARY KEY,
+            mr_code TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            project_name TEXT NOT NULL,
+            worker_user_id BIGINT NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            items_description TEXT NOT NULL,
+            urgency TEXT NOT NULL,
+            status TEXT DEFAULT 'PENDING',
+            approved_by_name TEXT,
+            approved_by_id BIGINT,
+            updated_at TEXT,
+            notes TEXT,
+            message_id BIGINT,
+            topic_id BIGINT
+        );
+
+        CREATE TABLE IF NOT EXISTS issues (
+            id SERIAL PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            project_name TEXT NOT NULL,
+            worker_user_id BIGINT NOT NULL,
+            worker_name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            severity TEXT DEFAULT 'NORMAL',
+            status TEXT DEFAULT 'OPEN',
+            resolved_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            name TEXT PRIMARY KEY,
+            topic_id BIGINT DEFAULT 0,
+            deadline TEXT,
+            progress_percent INTEGER DEFAULT 0,
+            created_at TEXT,
+            is_active INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """)
+    else:
+        # SQLite schema
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workers (
+            user_id INTEGER PRIMARY KEY,
+            full_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            phone TEXT,
+            is_approved INTEGER DEFAULT 0,
+            is_admin INTEGER DEFAULT 0,
+            assigned_project TEXT DEFAULT 'ALL',
+            registered_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            shift_type TEXT DEFAULT 'DAY',
+            project_name TEXT NOT NULL,
+            worker_user_id INTEGER NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            work_completed TEXT NOT NULL,
+            plan_tomorrow TEXT NOT NULL,
+            blockers TEXT,
+            photo_file_ids TEXT,
+            message_id INTEGER,
+            FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS material_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mr_code TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            project_name TEXT NOT NULL,
+            worker_user_id INTEGER NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            items_description TEXT NOT NULL,
+            urgency TEXT NOT NULL,
+            status TEXT DEFAULT 'PENDING',
+            approved_by_name TEXT,
+            approved_by_id INTEGER,
+            updated_at TEXT,
+            notes TEXT,
+            message_id INTEGER,
+            topic_id INTEGER,
+            FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            project_name TEXT NOT NULL,
+            worker_user_id INTEGER NOT NULL,
+            worker_name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            severity TEXT DEFAULT 'NORMAL',
+            status TEXT DEFAULT 'OPEN',
+            resolved_at TEXT,
+            FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            name TEXT PRIMARY KEY,
+            topic_id INTEGER DEFAULT 0,
+            deadline TEXT,
+            progress_percent INTEGER DEFAULT 0,
+            created_at TEXT,
+            is_active INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """)
+
+        # Auto-migration for existing SQLite files
+        cursor.execute("PRAGMA table_info(reports)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "shift_type" not in columns:
+            cursor.execute("ALTER TABLE reports ADD COLUMN shift_type TEXT DEFAULT 'DAY'")
+        if "photo_file_ids" not in columns:
+            cursor.execute("ALTER TABLE reports ADD COLUMN photo_file_ids TEXT")
+
+        cursor.execute("PRAGMA table_info(projects)")
+        proj_cols = [row[1] for row in cursor.fetchall()]
+        if "deadline" not in proj_cols:
+            cursor.execute("ALTER TABLE projects ADD COLUMN deadline TEXT")
+        if "progress_percent" not in proj_cols:
+            cursor.execute("ALTER TABLE projects ADD COLUMN progress_percent INTEGER DEFAULT 0")
+        if "created_at" not in proj_cols:
+            cursor.execute("ALTER TABLE projects ADD COLUMN created_at TEXT")
+
+    conn.commit()
+    conn.close()
+
+    # Pre-seed default projects if table is empty
+    active_projs = list_active_projects()
+    if not active_projs and DEFAULT_PROJECTS:
+        for p_name, t_id in DEFAULT_PROJECTS.items():
+            add_or_update_project(p_name, topic_id=t_id, progress_percent=0)
+        logger.info("Initialized default projects roster.")
 
 # --- Settings Operations ---
 
 def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else default
+    row = db_fetchone("SELECT value FROM settings WHERE key = ?", (key,))
+    return row["value"] if row else default
 
 def set_setting(key: str, value: str) -> None:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    db_execute("""
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
     """, (key, str(value)))
-    conn.commit()
-    conn.close()
 
 # --- Worker CRUD ---
 
 def get_worker(user_id: int) -> Optional[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM workers WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return db_fetchone("SELECT * FROM workers WHERE user_id = ?", (user_id,))
 
 def register_worker(user_id: int, full_name: str, role: str, is_approved: bool = False, is_admin: bool = False) -> None:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
+    db_execute("""
     INSERT INTO workers (user_id, full_name, role, is_approved, is_admin, registered_at)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
@@ -172,60 +309,31 @@ def register_worker(user_id: int, full_name: str, role: str, is_approved: bool =
         is_approved = excluded.is_approved,
         is_admin = excluded.is_admin
     """, (user_id, full_name, role, 1 if is_approved else 0, 1 if is_admin else 0, now_str))
-    conn.commit()
-    conn.close()
 
 def set_worker_approval(user_id: int, approved: bool) -> bool:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE workers SET is_approved = ? WHERE user_id = ?", (1 if approved else 0, user_id))
-    affected = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return affected
+    count = db_execute("UPDATE workers SET is_approved = ? WHERE user_id = ?", (1 if approved else 0, user_id))
+    return count > 0
 
 def list_all_workers() -> List[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM workers ORDER BY registered_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    return db_fetchall("SELECT * FROM workers ORDER BY registered_at DESC")
 
 # --- Projects ---
 
 def list_active_projects() -> List[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE is_active = 1 ORDER BY name ASC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    return db_fetchall("SELECT * FROM projects WHERE is_active = 1 ORDER BY name ASC")
 
 def get_project(name: str) -> Optional[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE name = ?", (name,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return db_fetchone("SELECT * FROM projects WHERE name = ?", (name,))
 
 def get_project_by_topic_id(topic_id: int) -> Optional[Dict[str, Any]]:
     """Finds an active project associated with a Telegram Topic message_thread_id."""
     if not topic_id:
         return None
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE topic_id = ? AND is_active = 1", (topic_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return db_fetchone("SELECT * FROM projects WHERE topic_id = ? AND is_active = 1", (topic_id,))
 
 def add_or_update_project(name: str, topic_id: int = 0, deadline: Optional[str] = None, progress_percent: int = 0) -> None:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
+    db_execute("""
     INSERT INTO projects (name, topic_id, deadline, progress_percent, created_at, is_active)
     VALUES (?, ?, ?, ?, ?, 1)
     ON CONFLICT(name) DO UPDATE SET
@@ -234,36 +342,19 @@ def add_or_update_project(name: str, topic_id: int = 0, deadline: Optional[str] 
         progress_percent = COALESCE(excluded.progress_percent, projects.progress_percent),
         is_active = 1
     """, (name, topic_id, deadline, progress_percent, now_str))
-    conn.commit()
-    conn.close()
 
 def update_project_progress(name: str, progress_percent: int) -> bool:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     progress_percent = max(0, min(100, progress_percent))
-    cursor.execute("UPDATE projects SET progress_percent = ? WHERE name = ?", (progress_percent, name))
-    affected = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return affected
+    count = db_execute("UPDATE projects SET progress_percent = ? WHERE name = ?", (progress_percent, name))
+    return count > 0
 
 def update_project_deadline(name: str, deadline: str) -> bool:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE projects SET deadline = ? WHERE name = ?", (deadline, name))
-    affected = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return affected
+    count = db_execute("UPDATE projects SET deadline = ? WHERE name = ?", (deadline, name))
+    return count > 0
 
 def remove_project(name: str) -> bool:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE projects SET is_active = 0 WHERE name = ?", (name,))
-    affected = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return affected
+    count = db_execute("UPDATE projects SET is_active = 0 WHERE name = ?", (name,))
+    return count > 0
 
 def render_progress_bar(percent: int, length: int = 10) -> str:
     """Renders a visual progress bar e.g. [██████░░░░] 60%"""
@@ -278,7 +369,6 @@ def get_deadline_info(deadline_str: Optional[str]) -> str:
     if not deadline_str:
         return "No deadline set"
     try:
-        # Support formats like YYYY-MM-DD or DD/MM/YYYY
         clean_d = deadline_str.strip()
         if "-" in clean_d:
             parts = clean_d.split("-")
@@ -321,70 +411,52 @@ def save_daily_report(
     photo_file_ids: Optional[str] = None,
     message_id: Optional[int] = None
 ) -> int:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     now = datetime.datetime.now()
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     date_str = now.strftime("%Y-%m-%d")
 
-    cursor.execute("""
+    report_id = db_execute("""
     INSERT INTO reports (timestamp, date_str, shift_type, project_name, worker_user_id, worker_name, worker_role, work_completed, plan_tomorrow, blockers, photo_file_ids, message_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (now_str, date_str, shift_type.upper(), project_name, worker_user_id, worker_name, worker_role, work_completed, plan_tomorrow, blockers, photo_file_ids, message_id))
-    report_id = cursor.lastrowid
+    """, (now_str, date_str, shift_type.upper(), project_name, worker_user_id, worker_name, worker_role, work_completed, plan_tomorrow, blockers, photo_file_ids, message_id), returning_id=True)
 
     # If blockers entered (and not 'none'), auto-create an open issue
     if blockers and blockers.strip().lower() not in ("none", "no", "n/a", "nil", "-"):
-        cursor.execute("""
+        db_execute("""
         INSERT INTO issues (timestamp, date_str, project_name, worker_user_id, worker_name, description, severity, status)
         VALUES (?, ?, ?, ?, ?, ?, 'NORMAL', 'OPEN')
         """, (now_str, date_str, project_name, worker_user_id, worker_name, blockers.strip()))
 
-    conn.commit()
-    conn.close()
     return report_id
 
 def get_latest_report(project_name: str, shift_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     if shift_type:
-        cursor.execute("""
+        return db_fetchone("""
         SELECT * FROM reports WHERE project_name = ? AND shift_type = ? ORDER BY timestamp DESC LIMIT 1
         """, (project_name, shift_type.upper()))
     else:
-        cursor.execute("""
+        return db_fetchone("""
         SELECT * FROM reports WHERE project_name = ? ORDER BY timestamp DESC LIMIT 1
         """, (project_name,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
 
 def get_today_report_for_project(project_name: str, date_str: Optional[str] = None, shift_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
     if not date_str:
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    conn = get_db_connection()
-    cursor = conn.cursor()
     if shift_type:
-        cursor.execute("""
+        return db_fetchone("""
         SELECT * FROM reports WHERE project_name = ? AND date_str = ? AND shift_type = ? LIMIT 1
         """, (project_name, date_str, shift_type.upper()))
     else:
-        cursor.execute("""
+        return db_fetchone("""
         SELECT * FROM reports WHERE project_name = ? AND date_str = ? LIMIT 1
         """, (project_name, date_str))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
 
 # --- Material Requests (Numbered #MR-001) ---
 
 def generate_next_mr_code() -> str:
     """Generates next sequential Material Request code e.g. MR-001, MR-014."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(id) FROM material_requests")
-    max_id = cursor.fetchone()[0] or 0
-    conn.close()
+    row = db_fetchone("SELECT MAX(id) as max_id FROM material_requests")
+    max_id = (row["max_id"] or 0) if row and row.get("max_id") is not None else 0
     next_num = max_id + 1
     return f"MR-{next_num:03d}"
 
@@ -401,15 +473,10 @@ def create_material_request(
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     date_str = now.strftime("%Y-%m-%d")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    req_id = db_execute("""
     INSERT INTO material_requests (mr_code, timestamp, date_str, project_name, worker_user_id, worker_name, worker_role, items_description, urgency, status, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
-    """, (mr_code, now_str, date_str, project_name, worker_user_id, worker_name, worker_role, items_description, urgency, now_str))
-    req_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    """, (mr_code, now_str, date_str, project_name, worker_user_id, worker_name, worker_role, items_description, urgency, now_str), returning_id=True)
 
     return {
         "id": req_id,
@@ -424,18 +491,12 @@ def create_material_request(
     }
 
 def get_material_request_by_code(mr_code: str) -> Optional[Dict[str, Any]]:
-    # Normalize: allow user to type "mr-14", "#MR-014", "MR-014"
     clean_code = mr_code.upper().replace("#", "").strip()
     if clean_code.startswith("MR-") and clean_code[3:].isdigit():
         num = int(clean_code[3:])
         clean_code = f"MR-{num:03d}"
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM material_requests WHERE mr_code = ?", (clean_code,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return db_fetchone("SELECT * FROM material_requests WHERE mr_code = ?", (clean_code,))
 
 def update_material_request_status(
     mr_code: str,
@@ -450,53 +511,37 @@ def update_material_request_status(
         clean_code = f"MR-{num:03d}"
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    db_execute("""
     UPDATE material_requests
     SET status = ?, approved_by_name = ?, approved_by_id = ?, updated_at = ?, notes = COALESCE(?, notes)
     WHERE mr_code = ?
     """, (new_status, approved_by_name, approved_by_id, now_str, notes, clean_code))
-    conn.commit()
     
-    cursor.execute("SELECT * FROM material_requests WHERE mr_code = ?", (clean_code,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    return db_fetchone("SELECT * FROM material_requests WHERE mr_code = ?", (clean_code,))
 
 def get_open_material_requests(project_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     if project_name:
-        cursor.execute("""
+        return db_fetchall("""
         SELECT * FROM material_requests 
         WHERE project_name = ? AND status IN ('PENDING', 'IN_TRANSIT')
         ORDER BY id DESC
         """, (project_name,))
     else:
-        cursor.execute("""
+        return db_fetchall("""
         SELECT * FROM material_requests 
         WHERE status IN ('PENDING', 'IN_TRANSIT')
         ORDER BY id DESC
         """)
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 # --- Issues & Blockers ---
 
 def get_open_issues(project_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     if project_name:
-        cursor.execute("""
+        return db_fetchall("""
         SELECT * FROM issues WHERE project_name = ? AND status = 'OPEN' ORDER BY timestamp DESC
         """, (project_name,))
     else:
-        cursor.execute("SELECT * FROM issues WHERE status = 'OPEN' ORDER BY timestamp DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        return db_fetchall("SELECT * FROM issues WHERE status = 'OPEN' ORDER BY timestamp DESC")
 
 # Initialize tables on import
 init_db()

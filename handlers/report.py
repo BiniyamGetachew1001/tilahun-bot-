@@ -26,7 +26,7 @@ from handlers.auth import is_authorized
 logger = logging.getLogger(__name__)
 
 # Conversation states
-SELECT_PROJECT, SELECT_SHIFT, INPUT_COMPLETED, INPUT_TOMORROW, INPUT_BLOCKERS, INPUT_PROGRESS = range(6)
+SELECT_PROJECT, SELECT_SHIFT, INPUT_COMPLETED, INPUT_TOMORROW, INPUT_BLOCKERS, INPUT_PHOTO, INPUT_PROGRESS = range(7)
 
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for /report, /day_report, '☀️ Day Report' button, and 'menu_day_report'."""
@@ -75,7 +75,7 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
                 await update.message.reply_text(
                     f"📋 *{shift_label} Report — {topic_proj['name']}*\n\n"
-                    f"Step 1/4: *What work was completed during this shift?*\n"
+                    f"Step 1/5: *What work was completed during this shift?*\n"
                     f"(Type a text summary or record a 🎙️ Voice Message):",
                     parse_mode="Markdown"
                 )
@@ -96,7 +96,7 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
                 await update.message.reply_text(
                     f"📋 *{shift_label} Report — {matched['name']}*\n\n"
-                    f"Step 1/4: *What work was completed during this shift?*\n"
+                    f"Step 1/5: *What work was completed during this shift?*\n"
                     f"(Type a text summary or record a 🎙️ Voice Message):",
                     parse_mode="Markdown"
                 )
@@ -140,7 +140,7 @@ async def project_selected_callback(update: Update, context: ContextTypes.DEFAUL
         shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
         await query.edit_message_text(
             f"📋 *{shift_label} Report — {project_name}*\n\n"
-            f"Step 1/4: *What work was completed during this shift?*\n"
+            f"Step 1/5: *What work was completed during this shift?*\n"
             f"(Type a text summary or record a 🎙️ Voice Message):",
             parse_mode="Markdown"
         )
@@ -183,7 +183,7 @@ async def shift_selected_callback(update: Update, context: ContextTypes.DEFAULT_
     work_prompt = "during tonight's shift" if shift == "NIGHT" else "today"
     await query.edit_message_text(
         f"📋 *{shift_label} Report — {project_name}*\n\n"
-        f"Step 1/4: *What work was completed {work_prompt}?*\n"
+        f"Step 1/5: *What work was completed {work_prompt}?*\n"
         f"(Type a text summary or send a 🎙️ Voice Memo):",
         parse_mode="Markdown"
     )
@@ -206,7 +206,7 @@ async def receive_completed_work(update: Update, context: ContextTypes.DEFAULT_T
     plan_prompt = "for the next shift / morning handover" if shift == "NIGHT" else "for tomorrow"
 
     await update.message.reply_text(
-        f"Step 2/4: *What is the plan {plan_prompt}?*\n"
+        f"Step 2/5: *What is the plan {plan_prompt}?*\n"
         f"(List scheduled tasks or send a 🎙️ Voice Memo):",
         parse_mode="Markdown"
     )
@@ -229,7 +229,7 @@ async def receive_tomorrow_plan(update: Update, context: ContextTypes.DEFAULT_TY
     blocker_prompt = "delays, night hazards, or blockers" if shift == "NIGHT" else "delays, issues, or blockers"
 
     await update.message.reply_text(
-        f"Step 3/4: *Any {blocker_prompt}?*\n"
+        f"Step 3/5: *Any {blocker_prompt}?*\n"
         f"(Type *None* if no issues, or describe the problem):",
         parse_mode="Markdown"
     )
@@ -244,6 +244,47 @@ async def receive_blockers(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         context.user_data["report_blockers"] = msg.text.strip()
 
+    # Prompt for photo upload (Step 4/5)
+    keyboard = [
+        [InlineKeyboardButton("⏩ Skip Photo", callback_data="rep_skip_photo")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="rep_cancel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Step 4/5: 📸 *Site Progress Photos*\n\n"
+        "Send a photo showing the work done or site progress, or click *Skip Photo* below:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+    return INPUT_PHOTO
+
+async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    msg = update.message
+    if msg.photo:
+        photo_file_id = msg.photo[-1].file_id
+        context.user_data["report_photo_id"] = photo_file_id
+        await msg.reply_text("📸 *Photo attached successfully!*", parse_mode="Markdown")
+    elif msg.text and msg.text.strip().lower() in ("skip", "no", "none", "pass", "-", "skip photo"):
+        context.user_data["report_photo_id"] = None
+    else:
+        await msg.reply_text("Please upload a photo, or send 'skip' to continue without photos.")
+        return INPUT_PHOTO
+
+    return await prompt_progress_step(update, context)
+
+async def skip_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "rep_cancel":
+        await query.edit_message_text("❌ Report submission cancelled.")
+        return ConversationHandler.END
+
+    context.user_data["report_photo_id"] = None
+    return await prompt_progress_step(query, context, is_query=True)
+
+async def prompt_progress_step(target, context: ContextTypes.DEFAULT_TYPE, is_query: bool = False) -> int:
     proj_name = context.user_data.get("report_project", "Project")
     proj = get_project(proj_name)
     curr_pct = proj.get("progress_percent", 0) if proj else 0
@@ -264,13 +305,16 @@ async def receive_blockers(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        f"Step 4/4: *Overall Project Completion Percentage:*\n\n"
+    text = (
+        f"Step 5/5: *Overall Project Completion Percentage:*\n\n"
         f"Current Progress: {curr_bar}\n"
-        f"Select updated percentage below or *type any number (0-100)*:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        f"Select updated percentage below or *type any number (0-100)*:"
     )
+
+    if is_query:
+        await target.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await target.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
     return INPUT_PROGRESS
 
 async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -307,6 +351,7 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     work_completed = context.user_data.get("report_completed", "N/A")
     plan_tomorrow = context.user_data.get("report_tomorrow", "N/A")
     blockers_text = context.user_data.get("report_blockers", "None")
+    photo_id = context.user_data.get("report_photo_id")
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -337,11 +382,37 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     sent_msg_id = None
     if SUPERGROUP_CHAT_ID != 0:
         try:
-            kwargs = {"chat_id": SUPERGROUP_CHAT_ID, "text": card_text, "parse_mode": "Markdown"}
-            if topic_id and topic_id != 0:
-                kwargs["message_thread_id"] = topic_id
-            sent_msg = await context.bot.send_message(**kwargs)
-            sent_msg_id = sent_msg.message_id
+            if photo_id:
+                if len(card_text) <= 1024:
+                    sent_msg = await context.bot.send_photo(
+                        chat_id=SUPERGROUP_CHAT_ID,
+                        photo=photo_id,
+                        caption=card_text,
+                        parse_mode="Markdown",
+                        message_thread_id=topic_id if topic_id != 0 else None
+                    )
+                    sent_msg_id = sent_msg.message_id
+                else:
+                    sent_msg = await context.bot.send_message(
+                        chat_id=SUPERGROUP_CHAT_ID,
+                        text=card_text,
+                        parse_mode="Markdown",
+                        message_thread_id=topic_id if topic_id != 0 else None
+                    )
+                    sent_msg_id = sent_msg.message_id
+                    await context.bot.send_photo(
+                        chat_id=SUPERGROUP_CHAT_ID,
+                        photo=photo_id,
+                        caption=f"📸 *Site Progress Photo — {proj_name}*",
+                        parse_mode="Markdown",
+                        message_thread_id=topic_id if topic_id != 0 else None
+                    )
+            else:
+                kwargs = {"chat_id": SUPERGROUP_CHAT_ID, "text": card_text, "parse_mode": "Markdown"}
+                if topic_id and topic_id != 0:
+                    kwargs["message_thread_id"] = topic_id
+                sent_msg = await context.bot.send_message(**kwargs)
+                sent_msg_id = sent_msg.message_id
         except Exception as e:
             logger.error(f"Failed to post report to Supergroup topic ({topic_id}): {e}")
 
@@ -354,7 +425,7 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
         plan_tomorrow=plan_tomorrow,
         shift_type=shift,
         blockers=blockers_text,
-        photo_file_ids=None,
+        photo_file_ids=photo_id,
         message_id=sent_msg_id
     )
 
@@ -365,8 +436,9 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     except Exception as e:
         logger.warning(f"Google Sheets background sync notice: {e}")
 
+    photo_note = " 📸 *(1 Photo Attached)*" if photo_id else ""
     confirm_msg = (
-        f"🎉 *{shift_badge} Report Logged!* (Report #{report_id})\n\n"
+        f"🎉 *{shift_badge} Report Logged!* (Report #{report_id}){photo_note}\n\n"
         f"{card_text}"
     )
 
@@ -410,6 +482,11 @@ def get_report_handler() -> ConversationHandler:
             INPUT_COMPLETED: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, receive_completed_work)],
             INPUT_TOMORROW: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, receive_tomorrow_plan)],
             INPUT_BLOCKERS: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, receive_blockers)],
+            INPUT_PHOTO: [
+                MessageHandler(filters.PHOTO, receive_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_photo),
+                CallbackQueryHandler(skip_photo_callback, pattern=r"^(rep_skip_photo|rep_cancel)$")
+            ],
             INPUT_PROGRESS: [
                 CallbackQueryHandler(receive_progress_and_finish, pattern=r"^(rep_pct_|rep_cancel)"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_progress_and_finish)
@@ -418,3 +495,4 @@ def get_report_handler() -> ConversationHandler:
         fallbacks=[CommandHandler("cancel", cancel_report)],
         allow_reentry=True,
     )
+

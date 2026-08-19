@@ -22,3 +22,5 @@ services:
         value: "Africa/Addis_Ababa"
       - key: GOOGLE_SHEET_WEBHOOK_URL
         value: "https://script.google.com/macros/s/AKfycbzAsdxZXnjBbiuHdy_VO8ukSLaWKIxLLkuALy6fjZ5Yk0jRJ5g9FyIWQh19K_3qscYqBg/exec"
+      - key: DATABASE_URL
+        sync: false

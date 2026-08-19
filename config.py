@@ -41,6 +41,7 @@ MATERIALS_TOPIC_ID = int(os.getenv("TOPIC_MATERIALS", "13"))
 ISSUES_TOPIC_ID = int(os.getenv("TOPIC_ISSUES", "16"))
 
 # --- Database & Storage ---
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = BASE_DIR / "site_manager.db"
 EXPORTS_DIR = BASE_DIR / "exports"
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
