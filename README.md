@@ -88,4 +88,5 @@ python main.py
 | `/create_project` | Managers | Wizard to create a new project + Telegram Topic with a deadline |
 | `/workers` | Managers | View team roster and approval status |
 | `/approve_worker <ID>` | Managers | Approve a pending worker account |
+| `/weekly_report` | Managers | **Weekly Worker Activity Digest** (7-day employee breakdown & missed reports) |
 | `/check_reports` | Managers | Manually trigger Day & Night cutoff checks |

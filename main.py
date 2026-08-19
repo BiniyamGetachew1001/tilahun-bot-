@@ -64,6 +64,7 @@ from handlers.admin import (
     setup_topics_command,
     list_projects_command,
     remove_project_command,
+    weekly_report_command,
 )
 from scheduler import (
     setup_cutoff_scheduler,
@@ -144,6 +145,7 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
         BotCommand("export_sheets", "📥 Download Master Excel Spreadsheet"),
         BotCommand("workers", "👥 Registered Workers Roster"),
+        BotCommand("weekly_report", "📊 Weekly Worker Activity Digest"),
     ]
 
     try:
@@ -262,6 +264,7 @@ def main():
     application.add_handler(CommandHandler("remove_project", remove_project_command))
     application.add_handler(CommandHandler("add_project", add_project_command))
     application.add_handler(CommandHandler("check_reports", manual_check_reports_command))
+    application.add_handler(CommandHandler("weekly_report", weekly_report_command))
 
     # 8. Scheduled Cutoff Reminders (Day: 19:00, Night: 07:00)
     setup_cutoff_scheduler(application)

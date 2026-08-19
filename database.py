@@ -543,5 +543,109 @@ def get_open_issues(project_name: Optional[str] = None) -> List[Dict[str, Any]]:
     else:
         return db_fetchall("SELECT * FROM issues WHERE status = 'OPEN' ORDER BY timestamp DESC")
 
+# --- Weekly Worker Activity Summary ---
+
+def get_weekly_worker_summary(days: int = 7) -> Dict[str, Any]:
+    """
+    Compiles a comprehensive weekly digest of worker reporting activity:
+    - Lists each approved worker
+    - Daily breakdown for each date in the window (e.g. Mon-Sun)
+    - Work done, project, shift, or 'MISSING'
+    - Consistency score (% submitted)
+    """
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=days - 1)
+    
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    # Get all approved workers
+    all_workers = list_all_workers()
+    workers = [w for w in all_workers if w.get("is_approved") == 1]
+    if not workers:
+        workers = all_workers  # fallback if approval is disabled
+
+    # Get all reports in this date range
+    reports = db_fetchall("""
+    SELECT * FROM reports 
+    WHERE date_str >= ? AND date_str <= ?
+    ORDER BY timestamp ASC
+    """, (start_str, end_str))
+
+    # Map reports by (worker_user_id, date_str)
+    report_map = {}
+    for r in reports:
+        w_id = r["worker_user_id"]
+        d_str = r["date_str"]
+        if (w_id, d_str) not in report_map:
+            report_map[(w_id, d_str)] = []
+        report_map[(w_id, d_str)].append(r)
+
+    # Generate date list
+    date_list = []
+    curr = start_date
+    while curr <= end_date:
+        date_list.append(curr)
+        curr += datetime.timedelta(days=1)
+
+    worker_summaries = []
+    for w in workers:
+        w_id = w["user_id"]
+        w_name = w["full_name"]
+        w_role = w["role"]
+
+        daily_entries = []
+        submitted_days_count = 0
+
+        for d in date_list:
+            d_str = d.strftime("%Y-%m-%d")
+            day_name = d.strftime("%a")
+            day_reports = report_map.get((w_id, d_str), [])
+
+            if day_reports:
+                submitted_days_count += 1
+                details = []
+                for rep in day_reports:
+                    proj = rep["project_name"]
+                    shift = rep.get("shift_type", "DAY")
+                    shift_icon = "🌙" if shift == "NIGHT" else "☀️"
+                    work = rep.get("work_completed", "")
+                    short_work = (work[:60] + "...") if len(work) > 60 else work
+                    details.append(f"{shift_icon} {proj}: {short_work}")
+                
+                daily_entries.append({
+                    "date": d_str,
+                    "day_name": day_name,
+                    "status": "SUBMITTED",
+                    "summary": " | ".join(details)
+                })
+            else:
+                daily_entries.append({
+                    "date": d_str,
+                    "day_name": day_name,
+                    "status": "MISSING",
+                    "summary": "❌ No report submitted"
+                })
+
+        total_days = len(date_list)
+        pct = int(round((submitted_days_count / total_days) * 100)) if total_days > 0 else 0
+
+        worker_summaries.append({
+            "user_id": w_id,
+            "full_name": w_name,
+            "role": w_role,
+            "submitted_count": submitted_days_count,
+            "total_days": total_days,
+            "percentage": pct,
+            "daily_entries": daily_entries
+        })
+
+    return {
+        "start_date": start_str,
+        "end_date": end_str,
+        "total_days": len(date_list),
+        "workers": worker_summaries
+    }
+
 # Initialize tables on import
 init_db()

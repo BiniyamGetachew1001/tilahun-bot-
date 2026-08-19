@@ -84,8 +84,59 @@ async def _check_shift_reports(context: ContextTypes.DEFAULT_TYPE, shift_type: s
             except Exception as e:
                 logger.warning(f"Could not notify admin {admin_id} about missing reports: {e}")
 
+    # Nudge workers who have not submitted a report today
+    try:
+        workers = list_all_workers()
+        for w in workers:
+            w_id = w.get("user_id")
+            if w.get("is_approved") == 1 and w_id not in ADMIN_IDS:
+                # Check if worker submitted any report today
+                from database import db_fetchone
+                rep = db_fetchone("SELECT id FROM reports WHERE worker_user_id = ? AND date_str = ? LIMIT 1", (w_id, today_str))
+                if not rep:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=w_id,
+                            text=(
+                                f"🔔 *Friendly Cutoff Reminder*\n\n"
+                                f"Hi *{w['full_name']}*, you haven't submitted your *{shift_label}* report for today yet.\n"
+                                f"Please take a minute to submit it using `{command_hint}` or tap the button in `/menu`."
+                            ),
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.debug(f"Worker reminder check notice: {e}")
+
+async def send_weekly_admin_digest(context: ContextTypes.DEFAULT_TYPE):
+    """Compiles and sends the 7-day Worker Activity & Missing Report Digest directly to admins."""
+    if not ADMIN_IDS:
+        return
+
+    logger.info("📊 Generating weekly worker activity digest for admins...")
+    try:
+        from database import get_weekly_worker_summary
+        from handlers.admin import format_weekly_worker_summary_text
+
+        summary_data = get_weekly_worker_summary(days=7)
+        chunks = format_weekly_worker_summary_text(summary_data)
+
+        for admin_id in ADMIN_IDS:
+            try:
+                for chunk in chunks:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=chunk,
+                        parse_mode="Markdown"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not deliver weekly digest to admin {admin_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error compiling weekly admin digest: {e}")
+
 def setup_cutoff_scheduler(application):
-    """Schedules both Day (19:00) and Night (07:00) shift cutoff check jobs."""
+    """Schedules Day/Night shift cutoff checks and weekly admin digests."""
     job_queue = application.job_queue
     if not job_queue:
         logger.warning("JobQueue is not available. Ensure python-telegram-bot[job-queue] is installed.")
@@ -105,3 +156,8 @@ def setup_cutoff_scheduler(application):
     night_time = datetime.time(hour=NIGHT_CUTOFF_HOUR, minute=NIGHT_CUTOFF_MINUTE, tzinfo=tz)
     job_queue.run_daily(check_missing_night_reports, time=night_time, name="night_cutoff_check")
     logger.info(f"Night cutoff reminder scheduled for {NIGHT_CUTOFF_HOUR:02d}:{NIGHT_CUTOFF_MINUTE:02d} ({TIMEZONE_STR}).")
+
+    # 3. Weekly Worker Digest for Admins (Every Sunday at 20:00 / 8:00 PM)
+    weekly_time = datetime.time(hour=20, minute=0, tzinfo=tz)
+    job_queue.run_daily(send_weekly_admin_digest, time=weekly_time, days=(6,), name="weekly_admin_digest")
+    logger.info(f"Weekly admin digest scheduled for Sundays at 20:00 ({TIMEZONE_STR}).")

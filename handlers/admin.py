@@ -26,6 +26,7 @@ from database import (
     get_deadline_info,
     set_setting,
     get_setting,
+    get_weekly_worker_summary,
 )
 from config import SUPERGROUP_CHAT_ID
 from handlers.auth import is_admin, is_authorized
@@ -44,12 +45,81 @@ def build_admin_panel_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("➕ Create Project & Topic", callback_data="admin_create_proj")],
         [InlineKeyboardButton("📊 Project Progress Overview", callback_data="admin_progress_overview")],
         [InlineKeyboardButton("📈 Update Project Progress (%)", callback_data="admin_update_progress_btn")],
+        [InlineKeyboardButton("📋 Weekly Worker Activity Digest", callback_data="admin_weekly_summary")],
         [InlineKeyboardButton("👥 Registered Workers", callback_data="admin_workers_roster")],
         [InlineKeyboardButton("🔄 Sync Google Sheets", callback_data="admin_sync_sheets")],
         [InlineKeyboardButton("📥 Download Excel Export", callback_data="admin_export_excel")],
         [InlineKeyboardButton("🔔 Check Missing Reports", callback_data="admin_check_reports_btn")],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def format_weekly_worker_summary_text(summary_data: dict) -> list:
+    """Formats the weekly worker activity digest into Telegram-friendly text chunks."""
+    start_date = summary_data["start_date"]
+    end_date = summary_data["end_date"]
+    total_days = summary_data["total_days"]
+    workers = summary_data["workers"]
+
+    if not workers:
+        return ["📊 *Weekly Worker Activity Summary*\n\n❌ No registered workers found in database."]
+
+    messages = []
+    header = (
+        f"📊 *WEEKLY WORKER ACTIVITY DIGEST*\n"
+        f"📅 Period: *{start_date}* to *{end_date}* ({total_days} days)\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    current_chunk = header
+
+    for w in workers:
+        w_name = w["full_name"]
+        w_role = w["role"]
+        sub_count = w["submitted_count"]
+        pct = w["percentage"]
+        star = "⭐" if pct >= 90 else ("⚠️" if pct < 50 else "")
+
+        worker_block = (
+            f"👤 *{w_name}* _({w_role})_\n"
+            f"📈 Consistency: *{sub_count}/{total_days} days ({pct}%)* {star}\n"
+        )
+
+        for entry in w["daily_entries"]:
+            d_name = entry["day_name"]
+            d_str = entry["date"]
+            summary = entry["summary"]
+            if entry["status"] == "SUBMITTED":
+                worker_block += f" • *{d_name} ({d_str[-5:]}):* {summary}\n"
+            else:
+                worker_block += f" • *{d_name} ({d_str[-5:]}):* ❌ _Missed report_\n"
+
+        worker_block += "────────────────────\n"
+
+        if len(current_chunk) + len(worker_block) > 3800:
+            messages.append(current_chunk)
+            current_chunk = worker_block
+        else:
+            current_chunk += worker_block
+
+    if current_chunk:
+        current_chunk += "\n💡 _Tip: Run /export_sheets to download full master Excel spreadsheets._"
+        messages.append(current_chunk)
+
+    return messages
+
+async def weekly_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /weekly_report — generates a 7-day worker submission & missed report breakdown."""
+    user = update.effective_user
+    if not is_admin(user.id):
+        await update.message.reply_text("⛔ Only managers/admins can access the Weekly Worker Activity Report.")
+        return
+
+    msg = await update.message.reply_text("⏳ Compiling Weekly Worker Activity Report...")
+    summary_data = get_weekly_worker_summary(days=7)
+    chunks = format_weekly_worker_summary_text(summary_data)
+    
+    await msg.delete()
+    for chunk in chunks:
+        await update.message.reply_text(chunk, parse_mode="Markdown")
 
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /admin or /control — displays the Manager Controller Board."""
@@ -135,6 +205,18 @@ async def admin_panel_callback_handler(update: Update, context: ContextTypes.DEF
 
         keyboard = [[InlineKeyboardButton("⬅️ Back to Controller", callback_data="admin_dashboard")]]
         await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "admin_weekly_summary":
+        await query.edit_message_text("⏳ Generating Weekly Worker Activity Digest...")
+        summary_data = get_weekly_worker_summary(days=7)
+        chunks = format_weekly_worker_summary_text(summary_data)
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Controller", callback_data="admin_dashboard")]])
+        for i, chunk in enumerate(chunks):
+            reply_markup = back_kb if i == len(chunks) - 1 else None
+            if i == 0:
+                await query.edit_message_text(chunk, reply_markup=reply_markup, parse_mode="Markdown")
+            else:
+                await context.bot.send_message(chat_id=query.message.chat_id, text=chunk, reply_markup=reply_markup, parse_mode="Markdown")
 
     elif data in ("admin_export_excel", "menu_export"):
         await query.edit_message_text("⏳ Generating Excel export (Reports, MaterialRequests, Issues, Workers)...")
