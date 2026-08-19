@@ -2,9 +2,9 @@
 # Supported: English (en), Amharic (am), Afaan Oromoo (om)
 
 LANGUAGES = {
-    "en": {"name": "English", "flag": "🇬🇧"},
-    "am": {"name": "አማርኛ", "flag": "🇪🇹"},
-    "om": {"name": "Afaan Oromoo", "flag": "🌳"},
+    "en": {"name": "English"},
+    "am": {"name": "አማርኛ"},
+    "om": {"name": "Afaan Oromoo"},
 }
 
 STRINGS = {
@@ -82,9 +82,9 @@ STRINGS = {
         "om": "🌐 *Afaan barbaaddan filadhaa:*\nFiladhaa | Choose | ይምረጡ:"
     },
     "language_updated": {
-        "en": "✅ Language changed to *English 🇬🇧*.",
-        "am": "✅ ቋንቋ ወደ *አማርኛ 🇪🇹* ተቀይሯል።",
-        "om": "✅ Afaan gara *Afaan Oromoo 🌳*tti jijjiirameera."
+        "en": "✅ Language changed to *English*.",
+        "am": "✅ ቋንቋ ወደ *አማርኛ* ተቀይሯል።",
+        "om": "✅ Afaan gara *Afaan Oromoo*tti jijjiirameera."
     },
 
     # --- Onboarding & Auth ---

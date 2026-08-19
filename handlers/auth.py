@@ -85,9 +85,9 @@ def build_language_picker_keyboard(prefix: str = "lang_") -> InlineKeyboardMarku
     """Builds inline language selector buttons."""
     keyboard = [
         [
-            InlineKeyboardButton("🇬🇧 English", callback_data=f"{prefix}en"),
-            InlineKeyboardButton("🇪🇹 አማርኛ", callback_data=f"{prefix}am"),
-            InlineKeyboardButton("🌳 Afaan Oromoo", callback_data=f"{prefix}om"),
+            InlineKeyboardButton("English", callback_data=f"{prefix}en"),
+            InlineKeyboardButton("አማርኛ", callback_data=f"{prefix}am"),
+            InlineKeyboardButton("Afaan Oromoo", callback_data=f"{prefix}om"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
