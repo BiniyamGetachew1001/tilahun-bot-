@@ -155,6 +155,32 @@ async def setup_bot_commands(application: Application) -> None:
     except Exception as e:
         logger.warning(f"Could not register Telegram slash commands: {e}")
 
+import threading
+import os
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Responds with 200 OK to cloud pingers/health checks to prevent sleep."""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK - Telegram Bot is active and running 24/7.")
+
+    def log_message(self, format, *args):
+        pass  # Suppress excessive HTTP access logs
+
+def start_health_server():
+    """Starts background HTTP server on the cloud assigned PORT (default 8080)."""
+    port = int(os.getenv("PORT", "8080"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"🌐 Cloud Health Check server listening on port {port}")
+    except Exception as e:
+        logger.warning(f"Could not start health check server on port {port}: {e}")
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("\n" + "="*60)
@@ -162,6 +188,9 @@ def main():
         print("Please edit .env or set BOT_TOKEN in config.py with your token from @BotFather.")
         print("="*60 + "\n")
         sys.exit(1)
+
+    # Start health check server for Render/Koyeb 24/7 uptime
+    start_health_server()
 
     # Initialize database
     init_db()
