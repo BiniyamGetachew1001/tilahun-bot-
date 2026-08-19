@@ -1,0 +1,30 @@
+# Environment & Secrets
+.env
+.env.local
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Database & runtime files
+site_manager.db
+site_manager.db-wal
+site_manager.db-shm
+*.db
+*.sqlite3
+
+# Exports
+exports/*.xlsx
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
