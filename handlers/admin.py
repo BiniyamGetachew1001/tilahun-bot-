@@ -42,14 +42,26 @@ PROG_SELECT_PROJ, PROG_INPUT_PERCENT = range(2)
 def build_admin_panel_keyboard() -> InlineKeyboardMarkup:
     """Builds the interactive controller button menu for managers/admins."""
     keyboard = [
-        [InlineKeyboardButton("➕ Create Project & Topic", callback_data="admin_create_proj")],
-        [InlineKeyboardButton("📊 Project Progress Overview", callback_data="admin_progress_overview")],
-        [InlineKeyboardButton("📈 Update Project Progress (%)", callback_data="admin_update_progress_btn")],
-        [InlineKeyboardButton("📋 Weekly Worker Activity Digest", callback_data="admin_weekly_summary")],
-        [InlineKeyboardButton("👥 Registered Workers", callback_data="admin_workers_roster")],
-        [InlineKeyboardButton("🔄 Sync Google Sheets", callback_data="admin_sync_sheets")],
-        [InlineKeyboardButton("📥 Download Excel Export", callback_data="admin_export_excel")],
-        [InlineKeyboardButton("🔔 Check Missing Reports", callback_data="admin_check_reports_btn")],
+        [
+            InlineKeyboardButton("➕ Create Project", callback_data="admin_create_proj"),
+            InlineKeyboardButton("📢 Broadcast Announcement", callback_data="admin_broadcast"),
+        ],
+        [
+            InlineKeyboardButton("💼 Finance & Loans", callback_data="admin_finance"),
+            InlineKeyboardButton("📊 Progress Overview", callback_data="admin_progress_overview"),
+        ],
+        [
+            InlineKeyboardButton("📈 Update Progress (%)", callback_data="admin_update_progress_btn"),
+            InlineKeyboardButton("📋 Weekly Digest", callback_data="admin_weekly_summary"),
+        ],
+        [
+            InlineKeyboardButton("👥 Registered Workers", callback_data="admin_workers_roster"),
+            InlineKeyboardButton("📥 Download Excel Export", callback_data="admin_export_excel"),
+        ],
+        [
+            InlineKeyboardButton("🔄 Sync Google Sheets", callback_data="admin_sync_sheets"),
+            InlineKeyboardButton("🔔 Check Missing Reports", callback_data="admin_check_reports_btn"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -150,20 +162,42 @@ async def admin_panel_callback_handler(update: Update, context: ContextTypes.DEF
     elif data == "menu_profile":
         from handlers.auth import profile_command
         return await profile_command(update, context)
+    elif data == "menu_language":
+        from handlers.auth import language_command
+        return await language_command(update, context)
+    elif data == "menu_loan_request":
+        from handlers.finance import request_loan_start
+        return await request_loan_start(update, context)
+    elif data == "menu_my_loans":
+        from handlers.finance import my_loans_command
+        return await my_loans_command(update, context)
+    elif data == "menu_announcements":
+        from handlers.announcements import list_announcements_command
+        return await list_announcements_command(update, context)
+    elif data == "admin_broadcast":
+        if not is_admin(user.id):
+            await query.answer("⛔ Only managers/admins can broadcast announcements.", show_alert=True)
+            return
+        from handlers.announcements import broadcast_start
+        return await broadcast_start(update, context)
 
     # All actions below require Admin permissions
     if not is_admin(user.id):
         await query.answer("⛔ Only managers/admins can access this function.", show_alert=True)
         return
 
-    if data in ("admin_dashboard", "menu_admin"):
+    if data in ("admin_dashboard", "menu_admin", "admin_back_to_main"):
         await query.edit_message_text(
             "🎛️ *SITE MANAGEMENT CONTROLLER PANEL*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Use the buttons below to create project topics with deadlines, monitor real-time progress bars, and manage site operations:",
+            "Use the buttons below to create projects with deadlines, monitor real-time progress bars, manage finances, and broadcast announcements:",
             reply_markup=build_admin_panel_keyboard(),
             parse_mode="Markdown"
         )
+
+    elif data == "admin_finance":
+        from handlers.finance import finance_panel_command
+        return await finance_panel_command(update, context)
 
     elif data == "admin_progress_overview":
         projects = list_active_projects()
@@ -368,7 +402,7 @@ async def _finish_project_creation(update: Update, context: ContextTypes.DEFAULT
     proj_name = context.user_data.get("new_proj_name", "New Project")
     user = update.effective_user
 
-    status_text = f"⏳ Creating Forum Topic for *{proj_name}* in Telegram..."
+    status_text = f"⏳ Initializing project *{proj_name}*..."
     if update.callback_query:
         msg = await update.callback_query.edit_message_text(status_text, parse_mode="Markdown")
     else:
@@ -383,43 +417,23 @@ async def _finish_project_creation(update: Update, context: ContextTypes.DEFAULT
                 icon_color=0x8EEE98
             )
             topic_id = topic.message_thread_id
-            
-            # Post welcome & progress card into the new topic
-            deadline_info = get_deadline_info(deadline)
-            bar = render_progress_bar(0)
-            topic_welcome = (
-                f"🏗️ *TOPIC CREATED: {proj_name.upper()}*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📊 *Initial Progress:* {bar}\n"
-                f"⏳ *Target Deadline:* {deadline_info}\n"
-                f"👤 *Created By:* {user.full_name}\n\n"
-                f"Daily and Night progress reports for this site will be logged here.\n"
-                f"Foremen can submit updates via `/report` or `/night_report`."
-            )
-            await context.bot.send_message(
-                chat_id=SUPERGROUP_CHAT_ID,
-                message_thread_id=topic_id,
-                text=topic_welcome,
-                parse_mode="Markdown"
-            )
         except Exception as e:
-            logger.error(f"Failed to create forum topic in Telegram: {e}")
+            logger.debug(f"Optional topic notice: {e}")
 
     # Save to SQLite Database with deadline and 0% initial progress
     add_or_update_project(proj_name, topic_id=topic_id, deadline=deadline, progress_percent=0)
 
     deadline_display = get_deadline_info(deadline)
     bar_display = render_progress_bar(0)
-    topic_display = f"`Topic #{topic_id}`" if topic_id else "(General Group)"
 
     final_text = (
-        f"🎉 *Project Created & Initialized!*\n"
+        f"🎉 *Project Registered & Active!*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏗️ *Project:* {proj_name}\n"
-        f"📌 *Telegram Topic:* {topic_display}\n"
-        f"⏳ *Deadline:* {deadline_display}\n"
+        f"🏗️ *Project Name:* {proj_name}\n"
+        f"⏳ *Target Deadline:* {deadline_display}\n"
         f"📊 *Progress Bar:* {bar_display}\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Workers can now submit shift reports and material requests for *{proj_name}*."
     )
 
     if update.callback_query:

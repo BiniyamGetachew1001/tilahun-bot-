@@ -9,7 +9,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from config import SUPERGROUP_CHAT_ID
+from config import SUPERGROUP_CHAT_ID, ADMIN_IDS
 from database import (
     get_worker,
     list_active_projects,
@@ -29,6 +29,83 @@ logger = logging.getLogger(__name__)
 # Conversation states
 SELECT_PROJECT, SELECT_SHIFT, INPUT_COMPLETED, INPUT_TOMORROW, INPUT_BLOCKERS, INPUT_PHOTO, INPUT_PROGRESS = range(7)
 
+def build_report_card(
+    project_name: str,
+    worker_name: str,
+    worker_role: str,
+    shift: str,
+    pct_val: int,
+    deadline_display: str,
+    now_str: str,
+    work_completed: str,
+    plan_tomorrow: str,
+    blockers_display: str,
+    lang: str = "en"
+) -> str:
+    """Formats a structured report card in the target language (English, Amharic, or Afaan Oromoo)."""
+    bar_display = render_progress_bar(pct_val)
+
+    if lang == "am":
+        shift_title = "🌙 የማታ ፈረቃ የስራ ሂደት ሪፖርት" if shift == "NIGHT" else "☀️ የቀን ፈረቃ የስራ ሂደት ሪፖርት"
+        shift_badge = "🌙 የማታ ፈረቃ" if shift == "NIGHT" else "☀️ የቀን ፈረቃ"
+        plan_label = "🎯 የጠዋት ርክክብ / ቀጣይ እቅድ:" if shift == "NIGHT" else "🎯 የነገ እቅድ:"
+        blockers_clean = blockers_display if blockers_display.lower() not in ("none", "no", "n/a", "nil", "-", "የለም") else "ምንም የለም (በእቅዱ መሰረት ✅)"
+
+        return (
+            f"📋 *{shift_title}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏗️ *ፕሮጀክት:* {project_name}\n"
+            f"👤 *ሪፖርት ያደረገው:* {worker_name} _({worker_role})_\n"
+            f"🕒 *ፈረቃ:* {shift_badge}\n"
+            f"📊 *የፕሮጀክት እርምጃ:* {bar_display}\n"
+            f"⏳ *የማጠናቀቂያ ጊዜ:* {deadline_display}\n"
+            f"📅 *ቀንና ሰዓት:* {now_str}\n\n"
+            f"✅ *የተሰራው ስራ:*\n{work_completed}\n\n"
+            f"{plan_label}\n{plan_tomorrow}\n\n"
+            f"⚠️ *ያጋጠሙ ችግሮች / እንቅፋቶች:*\n{blockers_clean}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+    elif lang == "om":
+        shift_title = "🌙 GABAASA RAAWWII GAREE HALKAN" if shift == "NIGHT" else "☀️ GABAASA RAAWWII GAREE GUYYAA"
+        shift_badge = "🌙 Garee Halkan" if shift == "NIGHT" else "☀️ Garee Guyyaa"
+        plan_label = "🎯 Dabarsoo / Karoora Garee Dhufuuf:" if shift == "NIGHT" else "🎯 Karoora Boriif:"
+        blockers_clean = blockers_display if blockers_display.lower() not in ("none", "no", "n/a", "nil", "-", "hinjiru") else "Hin jiru (Akka karooratti ✅)"
+
+        return (
+            f"📋 *{shift_title}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏗️ *Piroojektii:* {project_name}\n"
+            f"👤 *Nama Gabaase:* {worker_name} _({worker_role})_\n"
+            f"🕒 *Garee:* {shift_badge}\n"
+            f"📊 *Adeemsa Piroojektii:* {bar_display}\n"
+            f"⏳ *Yeroo Xumuraa:* {deadline_display}\n"
+            f"📅 *Guyyaa fi Sa'aatii:* {now_str}\n\n"
+            f"✅ *Hojii Raawwatame:*\n{work_completed}\n\n"
+            f"{plan_label}\n{plan_tomorrow}\n\n"
+            f"⚠️ *Gufuuwwan / Rakkoolee:*\n{blockers_clean}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+    else:
+        shift_title = "🌙 NIGHT SHIFT PROGRESS REPORT" if shift == "NIGHT" else "☀️ DAY SHIFT PROGRESS REPORT"
+        shift_badge = "🌙 Night Shift" if shift == "NIGHT" else "☀️ Day Shift"
+        plan_label = "🎯 Handover / Next Shift Plan:" if shift == "NIGHT" else "🎯 Plan for Tomorrow:"
+        blockers_clean = blockers_display if blockers_display.lower() not in ("none", "no", "n/a", "nil", "-") else "None (On Schedule ✅)"
+
+        return (
+            f"📋 *{shift_title}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏗️ *Project:* {project_name}\n"
+            f"👤 *Reported By:* {worker_name} _({worker_role})_\n"
+            f"🕒 *Shift:* {shift_badge}\n"
+            f"📊 *Project Progress:* {bar_display}\n"
+            f"⏳ *Target Deadline:* {deadline_display}\n"
+            f"📅 *Date & Time:* {now_str}\n\n"
+            f"✅ *Work Completed:*\n{work_completed}\n\n"
+            f"{plan_label}\n{plan_tomorrow}\n\n"
+            f"⚠️ *Delays / Blockers:*\n{blockers_clean}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for /report, /day_report, '☀️ Day Report' button, and 'menu_day_report'."""
     context.user_data["default_shift"] = "DAY"
@@ -41,6 +118,7 @@ async def night_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
+    lang = get_user_lang(user.id)
     is_cb = bool(update.callback_query)
     
     if is_cb:
@@ -48,7 +126,7 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not is_authorized(user.id):
         worker = get_worker(user.id)
-        msg_txt = "⚠️ You must first register with `/start` before submitting reports." if not worker else "⏳ Your account is pending manager approval. Please wait until approved."
+        msg_txt = t("unauthorized_msg", lang) if not worker else t("pending_msg", lang)
         if is_cb:
             await update.callback_query.edit_message_text(msg_txt, parse_mode="Markdown")
         else:
@@ -57,7 +135,7 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     projects = list_active_projects()
     if not projects:
-        msg_txt = "❌ No active projects found. Please contact an admin."
+        msg_txt = "❌ No active projects found." if lang == "en" else ("❌ ምንም ንቁ ፕሮጀክት አልተገኘም።" if lang == "am" else "❌ Piroojektiin hojiirra jiru hin argamne.")
         if is_cb:
             await update.callback_query.edit_message_text(msg_txt)
         else:
@@ -73,13 +151,10 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             context.user_data["report_topic_id"] = topic_proj.get("topic_id", thread_id)
             if context.user_data.get("default_shift"):
                 context.user_data["report_shift"] = context.user_data["default_shift"]
-                shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
-                await update.message.reply_text(
-                    f"📋 *{shift_label} Report — {topic_proj['name']}*\n\n"
-                    f"Step 1/5: *What work was completed during this shift?*\n"
-                    f"(Type a text summary or record a 🎙️ Voice Message):",
-                    parse_mode="Markdown"
-                )
+                shift_label = t("rep_shift_night", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_shift_day", lang)
+                time_scope = t("rep_time_tonight", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_time_today", lang)
+                prompt_text = t("rep_step1_work", lang, shift_label=shift_label, project=topic_proj["name"], time_scope=time_scope)
+                await update.message.reply_text(prompt_text, parse_mode="Markdown")
                 return INPUT_COMPLETED
             else:
                 return await prompt_shift_selection(update, context)
@@ -94,13 +169,10 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             
             if context.user_data.get("default_shift"):
                 context.user_data["report_shift"] = context.user_data["default_shift"]
-                shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
-                await update.message.reply_text(
-                    f"📋 *{shift_label} Report — {matched['name']}*\n\n"
-                    f"Step 1/5: *What work was completed during this shift?*\n"
-                    f"(Type a text summary or record a 🎙️ Voice Message):",
-                    parse_mode="Markdown"
-                )
+                shift_label = t("rep_shift_night", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_shift_day", lang)
+                time_scope = t("rep_time_tonight", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_time_today", lang)
+                prompt_text = t("rep_step1_work", lang, shift_label=shift_label, project=matched["name"], time_scope=time_scope)
+                await update.message.reply_text(prompt_text, parse_mode="Markdown")
                 return INPUT_COMPLETED
             else:
                 return await prompt_shift_selection(update, context)
@@ -110,11 +182,11 @@ async def _init_report_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     for proj in projects:
         pct = proj.get("progress_percent", 0) or 0
         keyboard.append([InlineKeyboardButton(f"🏗️ {proj['name']} ({pct}%)", callback_data=f"rep_proj_{proj['name']}")])
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="rep_cancel")])
+    keyboard.append([InlineKeyboardButton(t("btn_cancel", lang), callback_data="rep_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    header = "🌙 *Night Shift Progress Report*" if context.user_data.get("default_shift") == "NIGHT" else "📋 *Day Shift Progress Report*"
-    prompt_txt = f"{header}\n\nSelect the *Project* you are reporting for:"
+    header = t("rep_header_night", lang) if context.user_data.get("default_shift") == "NIGHT" else t("rep_header_day", lang)
+    prompt_txt = t("rep_select_project", lang, header=header)
 
     if is_cb:
         await update.callback_query.edit_message_text(prompt_txt, reply_markup=reply_markup, parse_mode="Markdown")
@@ -126,9 +198,11 @@ async def project_selected_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
 
+    user = query.from_user
+    lang = get_user_lang(user.id)
     data = query.data
     if data == "rep_cancel":
-        await query.edit_message_text("❌ Report submission cancelled.")
+        await query.edit_message_text(t("rep_cancelled", lang))
         return ConversationHandler.END
 
     project_name = data.replace("rep_proj_", "")
@@ -138,28 +212,28 @@ async def project_selected_callback(update: Update, context: ContextTypes.DEFAUL
 
     if context.user_data.get("default_shift"):
         context.user_data["report_shift"] = context.user_data["default_shift"]
-        shift_label = "🌙 Night Shift" if context.user_data["report_shift"] == "NIGHT" else "☀️ Day Shift"
-        await query.edit_message_text(
-            f"📋 *{shift_label} Report — {project_name}*\n\n"
-            f"Step 1/5: *What work was completed during this shift?*\n"
-            f"(Type a text summary or record a 🎙️ Voice Message):",
-            parse_mode="Markdown"
-        )
+        shift_label = t("rep_shift_night", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_shift_day", lang)
+        time_scope = t("rep_time_tonight", lang) if context.user_data["report_shift"] == "NIGHT" else t("rep_time_today", lang)
+        prompt_text = t("rep_step1_work", lang, shift_label=shift_label, project=project_name, time_scope=time_scope)
+        await query.edit_message_text(prompt_text, parse_mode="Markdown")
         return INPUT_COMPLETED
 
     return await prompt_shift_selection(query, context, is_query=True)
 
 async def prompt_shift_selection(target, context: ContextTypes.DEFAULT_TYPE, is_query: bool = False) -> int:
+    user_id = target.from_user.id if is_query else target.effective_user.id
+    lang = get_user_lang(user_id)
     project_name = context.user_data.get("report_project", "Project")
+
     keyboard = [
         [
-            InlineKeyboardButton("☀️ Day Shift", callback_data="rep_shift_DAY"),
-            InlineKeyboardButton("🌙 Night Shift", callback_data="rep_shift_NIGHT")
+            InlineKeyboardButton(t("rep_shift_day", lang), callback_data="rep_shift_DAY"),
+            InlineKeyboardButton(t("rep_shift_night", lang), callback_data="rep_shift_NIGHT")
         ],
-        [InlineKeyboardButton("❌ Cancel", callback_data="rep_cancel")]
+        [InlineKeyboardButton(t("btn_cancel", lang), callback_data="rep_cancel")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    text = f"🏗️ *Project:* {project_name}\n\nSelect the *Working Shift*:"
+    text = t("rep_select_shift", lang, project=project_name)
 
     if is_query:
         await target.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -171,27 +245,28 @@ async def shift_selected_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
 
+    user = query.from_user
+    lang = get_user_lang(user.id)
     data = query.data
     if data == "rep_cancel":
-        await query.edit_message_text("❌ Report submission cancelled.")
+        await query.edit_message_text(t("rep_cancelled", lang))
         return ConversationHandler.END
 
     shift = data.replace("rep_shift_", "")
     context.user_data["report_shift"] = shift
     project_name = context.user_data.get("report_project", "Project")
-    shift_label = "🌙 Night Shift" if shift == "NIGHT" else "☀️ Day Shift"
+    shift_label = t("rep_shift_night", lang) if shift == "NIGHT" else t("rep_shift_day", lang)
+    time_scope = t("rep_time_tonight", lang) if shift == "NIGHT" else t("rep_time_today", lang)
+    prompt_text = t("rep_step1_work", lang, shift_label=shift_label, project=project_name, time_scope=time_scope)
 
-    work_prompt = "during tonight's shift" if shift == "NIGHT" else "today"
-    await query.edit_message_text(
-        f"📋 *{shift_label} Report — {project_name}*\n\n"
-        f"Step 1/5: *What work was completed {work_prompt}?*\n"
-        f"(Type a text summary or send a 🎙️ Voice Memo):",
-        parse_mode="Markdown"
-    )
+    await query.edit_message_text(prompt_text, parse_mode="Markdown")
     return INPUT_COMPLETED
 
 async def receive_completed_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = update.message
+    user = update.effective_user
+    lang = get_user_lang(user.id)
+
     if msg.voice:
         duration = msg.voice.duration
         caption = f" - {msg.caption}" if msg.caption else ""
@@ -199,22 +274,25 @@ async def receive_completed_work(update: Update, context: ContextTypes.DEFAULT_T
     else:
         text = msg.text.strip()
         if len(text) < 2:
-            await msg.reply_text("Please enter a brief description of the work completed:")
+            prompt_retry = "Please enter a brief description of the work completed:" if lang == "en" else (
+                "እባክዎ የተጠናቀቀውን ስራ በአጭሩ ይግለጹ:" if lang == "am" else "Maaloo ibsa gabaabaa hojii xumuramee galchaa:"
+            )
+            await msg.reply_text(prompt_retry)
             return INPUT_COMPLETED
         context.user_data["report_completed"] = text
 
     shift = context.user_data.get("report_shift", "DAY")
-    plan_prompt = "for the next shift / morning handover" if shift == "NIGHT" else "for tomorrow"
+    plan_prompt = t("rep_plan_handover", lang) if shift == "NIGHT" else t("rep_plan_tomorrow", lang)
+    prompt_text = t("rep_step2_plan", lang, time_scope=plan_prompt)
 
-    await update.message.reply_text(
-        f"Step 2/5: *What is the plan {plan_prompt}?*\n"
-        f"(List scheduled tasks or send a 🎙️ Voice Memo):",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(prompt_text, parse_mode="Markdown")
     return INPUT_TOMORROW
 
 async def receive_tomorrow_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = update.message
+    user = update.effective_user
+    lang = get_user_lang(user.id)
+
     if msg.voice:
         duration = msg.voice.duration
         caption = f" - {msg.caption}" if msg.caption else ""
@@ -222,22 +300,25 @@ async def receive_tomorrow_plan(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         text = msg.text.strip()
         if len(text) < 2:
-            await msg.reply_text("Please enter the plan / handover:")
+            prompt_retry = "Please enter the plan / handover:" if lang == "en" else (
+                "እባክዎ እቅድዎን ወይም የርክክብ መረጃውን ያስገቡ:" if lang == "am" else "Maaloo karoora ykn dabarsoo galchaa:"
+            )
+            await msg.reply_text(prompt_retry)
             return INPUT_TOMORROW
         context.user_data["report_tomorrow"] = text
 
     shift = context.user_data.get("report_shift", "DAY")
-    blocker_prompt = "delays, night hazards, or blockers" if shift == "NIGHT" else "delays, issues, or blockers"
+    blocker_prompt = t("rep_blockers_night", lang) if shift == "NIGHT" else t("rep_blockers_day", lang)
+    prompt_text = t("rep_step3_blockers", lang, blocker_prompt=blocker_prompt)
 
-    await update.message.reply_text(
-        f"Step 3/5: *Any {blocker_prompt}?*\n"
-        f"(Type *None* if no issues, or describe the problem):",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(prompt_text, parse_mode="Markdown")
     return INPUT_BLOCKERS
 
 async def receive_blockers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = update.message
+    user = update.effective_user
+    lang = get_user_lang(user.id)
+
     if msg.voice:
         duration = msg.voice.duration
         caption = f" - {msg.caption}" if msg.caption else ""
@@ -247,14 +328,13 @@ async def receive_blockers(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Prompt for photo upload (Step 4/5)
     keyboard = [
-        [InlineKeyboardButton("⏩ Skip Photo", callback_data="rep_skip_photo")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="rep_cancel")]
+        [InlineKeyboardButton(t("btn_skip_photo", lang), callback_data="rep_skip_photo")],
+        [InlineKeyboardButton(t("btn_cancel", lang), callback_data="rep_cancel")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "Step 4/5: 📸 *Site Progress Photos*\n\n"
-        "Send a photo showing the work done or site progress, or click *Skip Photo* below:",
+        t("rep_step4_photo", lang),
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -262,14 +342,20 @@ async def receive_blockers(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = update.message
+    user = update.effective_user
+    lang = get_user_lang(user.id)
+
     if msg.photo:
         photo_file_id = msg.photo[-1].file_id
         context.user_data["report_photo_id"] = photo_file_id
-        await msg.reply_text("📸 *Photo attached successfully!*", parse_mode="Markdown")
-    elif msg.text and msg.text.strip().lower() in ("skip", "no", "none", "pass", "-", "skip photo"):
+        await msg.reply_text(t("rep_photo_attached", lang), parse_mode="Markdown")
+    elif msg.text and msg.text.strip().lower() in ("skip", "no", "none", "pass", "-", "skip photo", "ዝለል", "darbi"):
         context.user_data["report_photo_id"] = None
     else:
-        await msg.reply_text("Please upload a photo, or send 'skip' to continue without photos.")
+        prompt_retry = "Please upload a photo, or send 'skip' to continue without photos." if lang == "en" else (
+            "እባክዎ ፎቶ ይላኩ ወይም ያለ ፎቶ ለመቀጠል 'ዝለል' ይበሉ:" if lang == "am" else "Maaloo suuraa ergaa ykn suuraa malee itti fufuuf 'darbi' jedhaa:"
+        )
+        await msg.reply_text(prompt_retry)
         return INPUT_PHOTO
 
     return await prompt_progress_step(update, context)
@@ -278,19 +364,24 @@ async def skip_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
+    user = query.from_user
+    lang = get_user_lang(user.id)
     if query.data == "rep_cancel":
-        await query.edit_message_text("❌ Report submission cancelled.")
+        await query.edit_message_text(t("rep_cancelled", lang))
         return ConversationHandler.END
 
     context.user_data["report_photo_id"] = None
     return await prompt_progress_step(query, context, is_query=True)
 
 async def prompt_progress_step(target, context: ContextTypes.DEFAULT_TYPE, is_query: bool = False) -> int:
+    user_id = target.from_user.id if is_query else target.effective_user.id
+    lang = get_user_lang(user_id)
     proj_name = context.user_data.get("report_project", "Project")
     proj = get_project(proj_name)
     curr_pct = proj.get("progress_percent", 0) if proj else 0
     curr_bar = render_progress_bar(curr_pct)
 
+    keep_text = f"Keep {curr_pct}%" if lang == "en" else (f"{curr_pct}% ይቆይ" if lang == "am" else f"{curr_pct}% Haa turu")
     keyboard = [
         [
             InlineKeyboardButton("25%", callback_data="rep_pct_25"),
@@ -300,17 +391,13 @@ async def prompt_progress_step(target, context: ContextTypes.DEFAULT_TYPE, is_qu
         [
             InlineKeyboardButton("90%", callback_data="rep_pct_90"),
             InlineKeyboardButton("100% 🎉", callback_data="rep_pct_100"),
-            InlineKeyboardButton(f"Keep {curr_pct}%", callback_data=f"rep_pct_{curr_pct}"),
+            InlineKeyboardButton(keep_text, callback_data=f"rep_pct_{curr_pct}"),
         ],
-        [InlineKeyboardButton("❌ Cancel", callback_data="rep_cancel")]
+        [InlineKeyboardButton(t("btn_cancel", lang), callback_data="rep_cancel")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    text = (
-        f"Step 5/5: *Overall Project Completion Percentage:*\n\n"
-        f"Current Progress: {curr_bar}\n"
-        f"Select updated percentage below or *type any number (0-100)*:"
-    )
+    text = t("rep_step5_progress", lang, bar=curr_bar)
 
     if is_query:
         await target.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -319,6 +406,8 @@ async def prompt_progress_step(target, context: ContextTypes.DEFAULT_TYPE, is_qu
     return INPUT_PROGRESS
 
 async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    lang = get_user_lang(user.id)
     proj_name = context.user_data.get("report_project", "General")
     proj_db = get_project(proj_name)
     curr_pct = proj_db.get("progress_percent", 0) if proj_db else 0
@@ -328,7 +417,7 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
         await query.answer()
         data = query.data
         if data == "rep_cancel":
-            await query.edit_message_text("❌ Report submission cancelled.")
+            await query.edit_message_text(t("rep_cancelled", lang))
             return ConversationHandler.END
         pct_val = int(data.replace("rep_pct_", ""))
     else:
@@ -342,7 +431,6 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     update_project_progress(proj_name, pct_val)
 
     # Gather full report data
-    user = update.effective_user
     worker = get_worker(user.id)
     worker_name = worker["full_name"] if worker else user.full_name
     worker_role = worker["role"] if worker else "Worker"
@@ -355,40 +443,45 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     photo_id = context.user_data.get("report_photo_id")
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    shift_title = "🌙 NIGHT SHIFT PROGRESS REPORT" if shift == "NIGHT" else "☀️ DAY SHIFT PROGRESS REPORT"
-    shift_badge = "🌙 Night Shift" if shift == "NIGHT" else "☀️ Day Shift"
-    plan_label = "🎯 Handover / Next Shift Plan:" if shift == "NIGHT" else "🎯 Plan for Tomorrow:"
-
-    bar_display = render_progress_bar(pct_val)
     deadline_display = get_deadline_info(proj_db.get("deadline") if proj_db else None)
 
-    blockers_display = blockers_text if blockers_text.lower() not in ("none", "no", "n/a", "nil", "-") else "None (On Schedule ✅)"
-
-    card_text = (
-        f"📋 *{shift_title}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏗️ *Project:* {proj_name}\n"
-        f"👤 *Reported By:* {worker_name} _({worker_role})_\n"
-        f"🕒 *Shift:* {shift_badge}\n"
-        f"📊 *Project Progress:* {bar_display}\n"
-        f"⏳ *Target Deadline:* {deadline_display}\n"
-        f"📅 *Date & Time:* {now_str}\n\n"
-        f"✅ *Work Completed:*\n{work_completed}\n\n"
-        f"{plan_label}\n{plan_tomorrow}\n\n"
-        f"⚠️ *Delays / Blockers:*\n{blockers_display}\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+    # Build localized card for the worker
+    worker_card = build_report_card(
+        project_name=proj_name,
+        worker_name=worker_name,
+        worker_role=worker_role,
+        shift=shift,
+        pct_val=pct_val,
+        deadline_display=deadline_display,
+        now_str=now_str,
+        work_completed=work_completed,
+        plan_tomorrow=plan_tomorrow,
+        blockers_display=blockers_text,
+        lang=lang
     )
 
     sent_msg_id = None
     if SUPERGROUP_CHAT_ID != 0:
+        default_card = build_report_card(
+            project_name=proj_name,
+            worker_name=worker_name,
+            worker_role=worker_role,
+            shift=shift,
+            pct_val=pct_val,
+            deadline_display=deadline_display,
+            now_str=now_str,
+            work_completed=work_completed,
+            plan_tomorrow=plan_tomorrow,
+            blockers_display=blockers_text,
+            lang="en"
+        )
         try:
             if photo_id:
-                if len(card_text) <= 1024:
+                if len(default_card) <= 1024:
                     sent_msg = await context.bot.send_photo(
                         chat_id=SUPERGROUP_CHAT_ID,
                         photo=photo_id,
-                        caption=card_text,
+                        caption=default_card,
                         parse_mode="Markdown",
                         message_thread_id=topic_id if topic_id != 0 else None
                     )
@@ -396,7 +489,7 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
                 else:
                     sent_msg = await context.bot.send_message(
                         chat_id=SUPERGROUP_CHAT_ID,
-                        text=card_text,
+                        text=default_card,
                         parse_mode="Markdown",
                         message_thread_id=topic_id if topic_id != 0 else None
                     )
@@ -409,13 +502,12 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
                         message_thread_id=topic_id if topic_id != 0 else None
                     )
             else:
-                kwargs = {"chat_id": SUPERGROUP_CHAT_ID, "text": card_text, "parse_mode": "Markdown"}
+                kwargs = {"chat_id": SUPERGROUP_CHAT_ID, "text": default_card, "parse_mode": "Markdown"}
                 if topic_id and topic_id != 0:
                     kwargs["message_thread_id"] = topic_id
                 sent_msg = await context.bot.send_message(**kwargs)
-                sent_msg_id = sent_msg.message_id
         except Exception as e:
-            logger.error(f"Failed to post report to Supergroup topic ({topic_id}): {e}")
+            logger.debug(f"Supergroup report notice: {e}")
 
     report_id = save_daily_report(
         project_name=proj_name,
@@ -430,6 +522,35 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
         message_id=sent_msg_id
     )
 
+    # Deliver report card directly to all Site Managers / Admins via DM in each admin's language
+    for admin_id in ADMIN_IDS:
+        if admin_id != user.id:
+            try:
+                admin_lang = get_user_lang(admin_id)
+                admin_card = build_report_card(
+                    project_name=proj_name,
+                    worker_name=worker_name,
+                    worker_role=worker_role,
+                    shift=shift,
+                    pct_val=pct_val,
+                    deadline_display=deadline_display,
+                    now_str=now_str,
+                    work_completed=work_completed,
+                    plan_tomorrow=plan_tomorrow,
+                    blockers_display=blockers_text,
+                    lang=admin_lang
+                )
+                if photo_id:
+                    if len(admin_card) <= 1024:
+                        await context.bot.send_photo(chat_id=admin_id, photo=photo_id, caption=admin_card, parse_mode="Markdown")
+                    else:
+                        await context.bot.send_message(chat_id=admin_id, text=admin_card, parse_mode="Markdown")
+                        await context.bot.send_photo(chat_id=admin_id, photo=photo_id)
+                else:
+                    await context.bot.send_message(chat_id=admin_id, text=admin_card, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Could not deliver report card to admin {admin_id}: {e}")
+
     # Real-time sync to Google Sheets
     try:
         append_report_live(report_id, now_str, shift, proj_name, worker_name, worker_role, work_completed, plan_tomorrow, blockers_text)
@@ -437,11 +558,9 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     except Exception as e:
         logger.warning(f"Google Sheets background sync notice: {e}")
 
-    photo_note = " 📸 *(1 Photo Attached)*" if photo_id else ""
-    confirm_msg = (
-        f"🎉 *{shift_badge} Report Logged!* (Report #{report_id}){photo_note}\n\n"
-        f"{card_text}"
-    )
+    photo_note = " 📸 *(1 Photo)*" if photo_id else ""
+    shift_badge_w = t("rep_shift_night", lang) if shift == "NIGHT" else t("rep_shift_day", lang)
+    confirm_msg = t("rep_success_confirm", lang, shift_badge=shift_badge_w, report_id=report_id, photo_note=photo_note, card=worker_card)
 
     if update.callback_query:
         await update.callback_query.edit_message_text(confirm_msg, parse_mode="Markdown")
@@ -452,11 +571,14 @@ async def receive_progress_and_finish(update: Update, context: ContextTypes.DEFA
     return ConversationHandler.END
 
 async def cancel_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    lang = get_user_lang(user.id)
+    cancel_text = t("rep_cancelled", lang)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text("❌ Report submission cancelled.")
+        await update.callback_query.edit_message_text(cancel_text)
     else:
-        await update.message.reply_text("❌ Report submission cancelled.", parse_mode="Markdown")
+        await update.message.reply_text(cancel_text, parse_mode="Markdown")
     return ConversationHandler.END
 
 def get_report_handler() -> ConversationHandler:
@@ -496,4 +618,3 @@ def get_report_handler() -> ConversationHandler:
         fallbacks=[CommandHandler("cancel", cancel_report)],
         allow_reentry=True,
     )
-

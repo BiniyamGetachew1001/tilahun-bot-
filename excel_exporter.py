@@ -21,6 +21,21 @@ def export_all_data_to_excel() -> Path:
     df_workers = pd.read_sql_query("SELECT user_id AS [Telegram User ID], full_name AS [Full Name], role AS [Role], is_approved AS [Approved], is_admin AS [Admin], registered_at AS [Registered Date] FROM workers ORDER BY registered_at DESC", conn)
     df_projects = pd.read_sql_query("SELECT name AS [Project Name], progress_percent AS [Progress %], deadline AS [Target Deadline], topic_id AS [Telegram Topic ID], CASE WHEN is_active = 1 THEN 'Active' ELSE 'Inactive' END AS [Status] FROM projects ORDER BY name ASC", conn)
 
+    df_finance = pd.read_sql_query("""
+    SELECT req_code AS [Request Code], date_str AS [Date], worker_name AS [Worker], worker_role AS [Role],
+           request_type AS [Request Type], amount AS [Amount], currency AS [Currency],
+           amount_repaid AS [Repaid So Far], (amount - amount_repaid) AS [Remaining Balance],
+           status AS [Status], reason AS [Reason], repayment_plan AS [Repayment Plan],
+           approved_by_name AS [Reviewed By], updated_at AS [Last Updated]
+    FROM financial_requests ORDER BY id DESC
+    """, conn)
+
+    df_announcements = pd.read_sql_query("""
+    SELECT id AS [ID], timestamp AS [Date & Time], admin_name AS [Posted By],
+           title AS [Title], message_text AS [Announcement Content], sent_count AS [Delivered Count]
+    FROM announcements ORDER BY id DESC
+    """, conn)
+
     conn.close()
 
     timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -30,6 +45,8 @@ def export_all_data_to_excel() -> Path:
         df_projects.to_excel(writer, sheet_name="Projects", index=False)
         df_reports.to_excel(writer, sheet_name="Reports", index=False)
         df_materials.to_excel(writer, sheet_name="MaterialRequests", index=False)
+        df_finance.to_excel(writer, sheet_name="FinancialRequests", index=False)
+        df_announcements.to_excel(writer, sheet_name="Announcements", index=False)
         df_issues.to_excel(writer, sheet_name="Issues", index=False)
         df_workers.to_excel(writer, sheet_name="Workers", index=False)
 

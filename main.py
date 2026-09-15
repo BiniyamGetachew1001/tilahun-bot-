@@ -73,6 +73,18 @@ from scheduler import (
     check_missing_day_reports,
     check_missing_night_reports
 )
+from handlers.finance import (
+    get_financial_request_wizard,
+    handle_loan_action_callback,
+    get_repayment_wizard,
+    my_loans_command,
+    finance_panel_command,
+    finance_menu_callback_handler,
+)
+from handlers.announcements import (
+    get_broadcast_wizard,
+    announcements_command,
+)
 
 # Logging setup
 logging.basicConfig(
@@ -102,22 +114,9 @@ async def manual_check_reports_command(update, context):
 
 async def setup_bot_commands(application: Application) -> None:
     """
-    Registers standard Telegram Slash Command popup menus for Groups, Private DMs, and Admins.
-    When users in the group type '/', this populates the inline command list.
+    Registers standard Telegram Slash Command menus for Private DMs and Admins.
     """
     from telegram import BotCommandScopeDefault
-
-    group_commands = [
-        BotCommand("menu", "📱 Interactive Actions Dashboard & Buttons"),
-        BotCommand("report", "☀️ Submit Day Shift Progress Report"),
-        BotCommand("night_report", "🌙 Submit Night Shift Progress Report"),
-        BotCommand("request_material", "📦 Request Materials / Tools (#MR-XXX)"),
-        BotCommand("status", "📊 View Project Snapshot & Progress Bar"),
-        BotCommand("progress", "📈 Update/View Project Completion (%)"),
-        BotCommand("projects", "🏗️ List Active Projects & Deadlines"),
-        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
-        BotCommand("admin", "🎛️ Manager Controller Board"),
-    ]
 
     private_commands = [
         BotCommand("start", "👋 Register / Open Buttons Menu"),
@@ -125,40 +124,43 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("report", "☀️ Submit Day Shift Progress Report"),
         BotCommand("night_report", "🌙 Submit Night Shift Progress Report"),
         BotCommand("request_material", "📦 Request Materials / Tools (#MR-XXX)"),
+        BotCommand("request_loan", "💰 Request Loan / Salary Advance"),
+        BotCommand("my_loans", "💳 My Loans & Repayment Status"),
         BotCommand("status", "📊 View Project Status"),
-        BotCommand("progress", "📈 Update Project Progress"),
         BotCommand("projects", "🏗️ Active Projects & Deadlines"),
-        BotCommand("profile", "👤 View My Worker Profile & Status"),
+        BotCommand("announcements", "📢 Site Announcements"),
+        BotCommand("profile", "👤 View My Profile & Loan Balance"),
         BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
         BotCommand("admin", "🎛️ Manager Control Dashboard"),
-        BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
-        BotCommand("export_sheets", "📥 Download Excel Export"),
+        BotCommand("finance", "💼 Financial Management Dashboard"),
     ]
 
     admin_commands = [
         BotCommand("start", "👋 Main Menu & Persistent Buttons"),
         BotCommand("menu", "📱 Interactive Actions Dashboard"),
         BotCommand("admin", "🎛️ Manager Controller Board"),
+        BotCommand("finance", "💼 Financial & Loans Management"),
+        BotCommand("broadcast", "📢 Broadcast Announcement to All Employees"),
+        BotCommand("record_repayment", "💳 Record Loan Repayment / Deduction"),
         BotCommand("report", "☀️ Submit Day Shift Progress Report"),
         BotCommand("night_report", "🌙 Submit Night Shift Progress Report"),
         BotCommand("request_material", "📦 Request Materials / Tools (#MR-XXX)"),
         BotCommand("status", "📊 Project Snapshot Dashboard"),
         BotCommand("progress", "📈 Update/View Completion (%)"),
         BotCommand("projects", "🏗️ List Active Projects & Deadlines"),
-        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
-        BotCommand("create_project", "➕ Create New Project & Forum Topic"),
-        BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
+        BotCommand("create_project", "➕ Create New Project"),
         BotCommand("export_sheets", "📥 Download Master Excel Spreadsheet"),
+        BotCommand("sync_sheets", "🔄 Sync Live with Google Sheets"),
         BotCommand("workers", "👥 Registered Workers Roster"),
         BotCommand("weekly_report", "📊 Weekly Worker Activity Digest"),
+        BotCommand("language", "🌐 Language / ቋንቋ / Afaan"),
     ]
 
     try:
-        await application.bot.set_my_commands(group_commands, scope=BotCommandScopeDefault())
-        await application.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        await application.bot.set_my_commands(private_commands, scope=BotCommandScopeDefault())
         await application.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
         await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeAllChatAdministrators())
-        logger.info("✅ Telegram Slash Command menus registered successfully across all scopes.")
+        logger.info("✅ Telegram Slash Command menus registered successfully across private and admin scopes.")
     except Exception as e:
         logger.warning(f"Could not register Telegram slash commands: {e}")
 
@@ -233,7 +235,24 @@ def main():
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
 
-    # 4. Status Command (/status and reply buttons in EN, AM, OM)
+    # 4. Financial Loan & Advance Wizard (/request_loan, /advance, /my_loans, /finance)
+    application.add_handler(get_financial_request_wizard())
+    application.add_handler(get_repayment_wizard())
+    application.add_handler(CallbackQueryHandler(handle_loan_action_callback, pattern=r"^loanact_"))
+    application.add_handler(CommandHandler("my_loans", my_loans_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(💳 My Loans|💳 የብድር ሁኔታ|💳 Haala Liqii)"), my_loans_command))
+    application.add_handler(CallbackQueryHandler(my_loans_command, pattern=r"^menu_my_loans$"))
+    application.add_handler(CommandHandler("finance", finance_panel_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(💼 Finance|💼 የፋይናንስ|💼 Faayinaansii)"), finance_panel_command))
+    application.add_handler(CallbackQueryHandler(finance_menu_callback_handler, pattern=r"^finmenu_"))
+
+    # 5. Broadcast Announcements (/broadcast, /announce, and buttons)
+    application.add_handler(get_broadcast_wizard())
+    application.add_handler(CommandHandler("announcements", announcements_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^(📢 Announcements|📢 ማስታወቂያዎች|📢 Beeksisa$)"), announcements_command))
+    application.add_handler(CallbackQueryHandler(announcements_command, pattern=r"^menu_announcements$"))
+
+    # 6. Status Command (/status and reply buttons in EN, AM, OM)
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(MessageHandler(filters.Regex(r"^(📊 Project Status|📊 የፕሮጀክት ሁኔታ|📊 Haala Piroojektii)$"), status_command))
     application.add_handler(CallbackQueryHandler(status_callback, pattern=r"^status_"))

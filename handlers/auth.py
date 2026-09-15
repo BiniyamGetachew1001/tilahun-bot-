@@ -63,12 +63,18 @@ def get_main_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     btn_admin = t("btn_admin_panel", lang)
     btn_sync = t("btn_sync_sheets", lang)
     btn_export = t("btn_export_excel", lang)
+    btn_loan = t("btn_request_loan", lang)
+    btn_my_loans = t("btn_my_loans", lang)
+    btn_finance = t("btn_finance_panel", lang)
+    btn_announce = t("btn_announcements", lang)
+    btn_broadcast = t("btn_broadcast", lang)
 
     if is_admin(user_id):
         keyboard = [
             [KeyboardButton(btn_day), KeyboardButton(btn_night)],
             [KeyboardButton(btn_mr), KeyboardButton(btn_status)],
-            [KeyboardButton(btn_admin), KeyboardButton(btn_projects)],
+            [KeyboardButton(btn_admin), KeyboardButton(btn_finance)],
+            [KeyboardButton(btn_broadcast), KeyboardButton(btn_projects)],
             [KeyboardButton(btn_sync), KeyboardButton(btn_export)],
             [KeyboardButton(btn_lang), KeyboardButton(btn_menu)],
         ]
@@ -76,8 +82,9 @@ def get_main_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         keyboard = [
             [KeyboardButton(btn_day), KeyboardButton(btn_night)],
             [KeyboardButton(btn_mr), KeyboardButton(btn_status)],
-            [KeyboardButton(btn_projects), KeyboardButton(btn_lang)],
-            [KeyboardButton(btn_menu)],
+            [KeyboardButton(btn_loan), KeyboardButton(btn_my_loans)],
+            [KeyboardButton(btn_projects), KeyboardButton(btn_announce)],
+            [KeyboardButton(btn_lang), KeyboardButton(btn_menu)],
         ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -106,16 +113,20 @@ def build_main_inline_menu(user_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(t("btn_project_status", lang), callback_data="menu_status"),
             ],
             [
-                InlineKeyboardButton(t("btn_projects", lang), callback_data="menu_projects"),
-                InlineKeyboardButton("📈 Update Progress", callback_data="menu_progress"),
+                InlineKeyboardButton(t("btn_admin_panel", lang), callback_data="menu_admin"),
+                InlineKeyboardButton(t("btn_finance_panel", lang), callback_data="admin_finance"),
             ],
             [
-                InlineKeyboardButton(t("btn_admin_panel", lang), callback_data="menu_admin"),
-                InlineKeyboardButton(t("btn_export_excel", lang), callback_data="menu_export"),
+                InlineKeyboardButton(t("btn_broadcast", lang), callback_data="admin_broadcast"),
+                InlineKeyboardButton(t("btn_projects", lang), callback_data="menu_projects"),
+            ],
+            [
+                InlineKeyboardButton("📈 Update Progress", callback_data="menu_progress"),
+                InlineKeyboardButton("👥 Team Roster", callback_data="menu_workers"),
             ],
             [
                 InlineKeyboardButton(t("btn_sync_sheets", lang), callback_data="menu_sync"),
-                InlineKeyboardButton("👥 Team Roster", callback_data="menu_workers"),
+                InlineKeyboardButton(t("btn_export_excel", lang), callback_data="menu_export"),
             ],
             [
                 InlineKeyboardButton("🌐 Switch Language / ቋንቋ / Afaan", callback_data="menu_language"),
@@ -132,11 +143,16 @@ def build_main_inline_menu(user_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(t("btn_project_status", lang), callback_data="menu_status"),
             ],
             [
-                InlineKeyboardButton(t("btn_projects", lang), callback_data="menu_projects"),
-                InlineKeyboardButton(t("btn_my_profile", lang), callback_data="menu_profile"),
+                InlineKeyboardButton(t("btn_request_loan", lang), callback_data="menu_loan_request"),
+                InlineKeyboardButton(t("btn_my_loans", lang), callback_data="menu_my_loans"),
             ],
             [
-                InlineKeyboardButton("🌐 Switch Language / ቋንቋ / Afaan", callback_data="menu_language"),
+                InlineKeyboardButton(t("btn_projects", lang), callback_data="menu_projects"),
+                InlineKeyboardButton(t("btn_announcements", lang), callback_data="menu_announcements"),
+            ],
+            [
+                InlineKeyboardButton(t("btn_my_profile", lang), callback_data="menu_profile"),
+                InlineKeyboardButton("🌐 Language / ቋንቋ", callback_data="menu_language"),
             ]
         ]
     return InlineKeyboardMarkup(keyboard)
@@ -392,21 +408,60 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     admin_tag = " ⭐ (Site Manager)" if is_admin(user.id) else ""
-    status_tag = "✅ Approved / Active" if worker.get("is_approved") else "⏳ Pending Approval"
     lang_display = LANGUAGES.get(worker.get("language", "en"), {}).get("name", "English")
 
-    text = (
-        f"👤 *WORKER PROFILE*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📛 *Name:* {worker['full_name']}{admin_tag}\n"
-        f"💼 *Role:* {worker['role']}\n"
-        f"🌐 *Language:* {lang_display}\n"
-        f"🆔 *User ID:* `{worker['user_id']}`\n"
-        f"📊 *Status:* {status_tag}\n"
-        f"📅 *Registered:* {worker.get('registered_at', 'N/A')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 _To change language, type /language or tap 🌐 Language button._"
-    )
+    from database import get_worker_active_loan_balance
+    from config import DEFAULT_CURRENCY
+    loan_bal = get_worker_active_loan_balance(user.id)
+
+    if lang == "am":
+        status_tag = "✅ የጸደቀ / ንቁ" if worker.get("is_approved") else "⏳ በአስተዳዳሪ ግምገማ ላይ"
+        loan_line = f"💵 *ያልተከፈለ ቀሪ ብድር:* `{loan_bal:,.2f} {DEFAULT_CURRENCY}`\n" if loan_bal > 0 else ""
+        text = (
+            f"👤 *የሰራተኛ መረጃ*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📛 *ስም:* {worker['full_name']}{admin_tag}\n"
+            f"💼 *የስራ ድርሻ:* {worker['role']}\n"
+            f"🌐 *ቋንቋ:* {lang_display}\n"
+            f"🆔 *የቴሌግራም መለያ:* `{worker['user_id']}`\n"
+            f"📊 *ሁኔታ:* {status_tag}\n"
+            f"{loan_line}"
+            f"📅 *የተመዘገበበት:* {worker.get('registered_at', 'N/A')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 _ቋንቋ ለመቀየር /language ይጻፉ ወይም 🌐 ቋንቋ የሚለውን ይጫኑ።_"
+        )
+    elif lang == "om":
+        status_tag = "✅ Mirkanaa'e / Hojiirra" if worker.get("is_approved") else "⏳ Eeyyama Eegaa Jira"
+        loan_line = f"💵 *Haftee Liqii:* `{loan_bal:,.2f} {DEFAULT_CURRENCY}`\n" if loan_bal > 0 else ""
+        text = (
+            f"👤 *PROFAAYILII HOJJATAA*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📛 *Maqaa:* {worker['full_name']}{admin_tag}\n"
+            f"💼 *Gahee Hojii:* {worker['role']}\n"
+            f"🌐 *Afaan:* {lang_display}\n"
+            f"🆔 *ID Telegram:* `{worker['user_id']}`\n"
+            f"📊 *Haala:* {status_tag}\n"
+            f"{loan_line}"
+            f"📅 *Kan Galmaa'e:* {worker.get('registered_at', 'N/A')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 _Afaan jijjiiruuf /language barreessaa ykn qabduu 🌐 Afaan tuqaa._"
+        )
+    else:
+        status_tag = "✅ Approved / Active" if worker.get("is_approved") else "⏳ Pending Approval"
+        loan_line = f"💵 *Outstanding Loan:* `{loan_bal:,.2f} {DEFAULT_CURRENCY}`\n" if loan_bal > 0 else ""
+        text = (
+            f"👤 *WORKER PROFILE*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📛 *Name:* {worker['full_name']}{admin_tag}\n"
+            f"💼 *Role:* {worker['role']}\n"
+            f"🌐 *Language:* {lang_display}\n"
+            f"🆔 *User ID:* `{worker['user_id']}`\n"
+            f"📊 *Status:* {status_tag}\n"
+            f"{loan_line}"
+            f"📅 *Registered:* {worker.get('registered_at', 'N/A')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 _To change language, type /language or tap 🌐 Language button._"
+        )
     reply_kb = get_main_reply_keyboard(user.id)
     await update.message.reply_text(text, reply_markup=reply_kb, parse_mode="Markdown")
 

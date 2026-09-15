@@ -12,6 +12,7 @@ from config import (
     TIMEZONE_STR
 )
 from database import list_active_projects, get_today_report_for_project, list_all_workers
+from locales import t, get_user_lang
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ async def _check_shift_reports(context: ContextTypes.DEFAULT_TYPE, shift_type: s
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"The following {len(missing_projects)} project(s) have *not submitted* a {shift_label} report today:\n\n"
             f"{missing_names}\n\n"
-            f"Reminders were automatically posted to the respective topics."
+            f"Automatic DM reminders have been dispatched to registered site workers."
         )
 
         for admin_id in ADMIN_IDS:
@@ -95,13 +96,13 @@ async def _check_shift_reports(context: ContextTypes.DEFAULT_TYPE, shift_type: s
                 rep = db_fetchone("SELECT id FROM reports WHERE worker_user_id = ? AND date_str = ? LIMIT 1", (w_id, today_str))
                 if not rep:
                     try:
+                        w_lang = get_user_lang(w_id)
+                        shift_w_label = t("rep_shift_night", w_lang) if shift_type == "NIGHT" else t("rep_shift_day", w_lang)
+                        nudge_title = t("nudge_worker_title", w_lang)
+                        nudge_body = t("nudge_worker_body", w_lang, name=w["full_name"], shift=shift_w_label, cmd=command_hint)
                         await context.bot.send_message(
                             chat_id=w_id,
-                            text=(
-                                f"🔔 *Friendly Cutoff Reminder*\n\n"
-                                f"Hi *{w['full_name']}*, you haven't submitted your *{shift_label}* report for today yet.\n"
-                                f"Please take a minute to submit it using `{command_hint}` or tap the button in `/menu`."
-                            ),
+                            text=f"{nudge_title}\n\n{nudge_body}",
                             parse_mode="Markdown"
                         )
                     except Exception:

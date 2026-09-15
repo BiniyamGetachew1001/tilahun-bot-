@@ -173,6 +173,49 @@ def init_db():
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS financial_requests (
+            id SERIAL PRIMARY KEY,
+            req_code TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            worker_user_id BIGINT NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            request_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT DEFAULT 'ETB',
+            reason TEXT NOT NULL,
+            repayment_plan TEXT,
+            status TEXT DEFAULT 'PENDING',
+            approved_by_name TEXT,
+            approved_by_id BIGINT,
+            amount_repaid REAL DEFAULT 0.0,
+            updated_at TEXT,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS financial_repayments (
+            id SERIAL PRIMARY KEY,
+            req_code TEXT NOT NULL,
+            worker_user_id BIGINT NOT NULL,
+            amount REAL NOT NULL,
+            date_str TEXT NOT NULL,
+            recorded_by_id BIGINT,
+            recorded_by_name TEXT,
+            notes TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS announcements (
+            id SERIAL PRIMARY KEY,
+            admin_id BIGINT NOT NULL,
+            admin_name TEXT NOT NULL,
+            title TEXT,
+            message_text TEXT NOT NULL,
+            photo_file_id TEXT,
+            timestamp TEXT NOT NULL,
+            sent_count INTEGER DEFAULT 0
+        );
         """)
     else:
         # SQLite schema
@@ -253,6 +296,51 @@ def init_db():
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS financial_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            req_code TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            date_str TEXT NOT NULL,
+            worker_user_id INTEGER NOT NULL,
+            worker_name TEXT NOT NULL,
+            worker_role TEXT NOT NULL,
+            request_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT DEFAULT 'ETB',
+            reason TEXT NOT NULL,
+            repayment_plan TEXT,
+            status TEXT DEFAULT 'PENDING',
+            approved_by_name TEXT,
+            approved_by_id INTEGER,
+            amount_repaid REAL DEFAULT 0.0,
+            updated_at TEXT,
+            notes TEXT,
+            FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS financial_repayments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            req_code TEXT NOT NULL,
+            worker_user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            date_str TEXT NOT NULL,
+            recorded_by_id INTEGER,
+            recorded_by_name TEXT,
+            notes TEXT,
+            FOREIGN KEY (worker_user_id) REFERENCES workers(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            admin_name TEXT NOT NULL,
+            title TEXT,
+            message_text TEXT NOT NULL,
+            photo_file_id TEXT,
+            timestamp TEXT NOT NULL,
+            sent_count INTEGER DEFAULT 0
         );
         """)
 
@@ -663,6 +751,183 @@ def get_weekly_worker_summary(days: int = 7) -> Dict[str, Any]:
         "total_days": len(date_list),
         "workers": worker_summaries
     }
+
+# --- Financial Requests & Loan Management (#LN-001) ---
+
+def generate_next_loan_code() -> str:
+    """Generates next sequential Financial Request / Loan code e.g. LN-001, LN-014."""
+    row = db_fetchone("SELECT MAX(id) as max_id FROM financial_requests")
+    max_id = (row["max_id"] or 0) if row and row.get("max_id") is not None else 0
+    next_num = max_id + 1
+    return f"LN-{next_num:03d}"
+
+def create_financial_request(
+    worker_user_id: int,
+    worker_name: str,
+    worker_role: str,
+    request_type: str,
+    amount: float,
+    reason: str,
+    repayment_plan: Optional[str] = None,
+    currency: str = "ETB"
+) -> Dict[str, Any]:
+    req_code = generate_next_loan_code()
+    now = datetime.datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    date_str = now.strftime("%Y-%m-%d")
+
+    req_id = db_execute("""
+    INSERT INTO financial_requests (
+        req_code, timestamp, date_str, worker_user_id, worker_name, worker_role,
+        request_type, amount, currency, reason, repayment_plan, status, amount_repaid, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0.0, ?)
+    """, (req_code, now_str, date_str, worker_user_id, worker_name, worker_role, request_type, float(amount), currency, reason, repayment_plan or "", now_str), returning_id=True)
+
+    return {
+        "id": req_id,
+        "req_code": req_code,
+        "timestamp": now_str,
+        "date_str": date_str,
+        "worker_user_id": worker_user_id,
+        "worker_name": worker_name,
+        "worker_role": worker_role,
+        "request_type": request_type,
+        "amount": float(amount),
+        "currency": currency,
+        "reason": reason,
+        "repayment_plan": repayment_plan or "",
+        "status": "PENDING",
+        "amount_repaid": 0.0
+    }
+
+def get_financial_request_by_code(req_code: str) -> Optional[Dict[str, Any]]:
+    clean_code = req_code.upper().replace("#", "").strip()
+    if clean_code.startswith("LN-") and clean_code[3:].isdigit():
+        num = int(clean_code[3:])
+        clean_code = f"LN-{num:03d}"
+
+    return db_fetchone("SELECT * FROM financial_requests WHERE req_code = ?", (clean_code,))
+
+def update_financial_request_status(
+    req_code: str,
+    new_status: str,
+    approved_by_name: str,
+    approved_by_id: int,
+    notes: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    clean_code = req_code.upper().replace("#", "").strip()
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    db_execute("""
+    UPDATE financial_requests
+    SET status = ?, approved_by_name = ?, approved_by_id = ?, updated_at = ?, notes = COALESCE(?, notes)
+    WHERE req_code = ?
+    """, (new_status.upper(), approved_by_name, approved_by_id, now_str, notes, clean_code))
+
+    return get_financial_request_by_code(clean_code)
+
+def record_loan_repayment(
+    req_code: str,
+    amount: float,
+    recorded_by_id: int,
+    recorded_by_name: str,
+    notes: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    clean_code = req_code.upper().replace("#", "").strip()
+    req = get_financial_request_by_code(clean_code)
+    if not req:
+        return None
+
+    now = datetime.datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    date_str = now.strftime("%Y-%m-%d")
+    amount = float(amount)
+
+    # Insert repayment entry
+    db_execute("""
+    INSERT INTO financial_repayments (req_code, worker_user_id, amount, date_str, recorded_by_id, recorded_by_name, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (clean_code, req["worker_user_id"], amount, date_str, recorded_by_id, recorded_by_name, notes or ""))
+
+    # Update amount_repaid in request
+    new_repaid = float(req.get("amount_repaid") or 0.0) + amount
+    total_amount = float(req["amount"])
+    new_status = "REPAID" if new_repaid >= total_amount else req["status"]
+
+    db_execute("""
+    UPDATE financial_requests
+    SET amount_repaid = ?, status = ?, updated_at = ?
+    WHERE req_code = ?
+    """, (new_repaid, new_status, now_str, clean_code))
+
+    return get_financial_request_by_code(clean_code)
+
+def get_worker_loans(user_id: int, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    if status:
+        return db_fetchall("""
+        SELECT * FROM financial_requests 
+        WHERE worker_user_id = ? AND status = ? 
+        ORDER BY id DESC
+        """, (user_id, status.upper()))
+    else:
+        return db_fetchall("""
+        SELECT * FROM financial_requests 
+        WHERE worker_user_id = ? 
+        ORDER BY id DESC
+        """, (user_id,))
+
+def get_worker_active_loan_balance(user_id: int) -> float:
+    """Calculates outstanding unpaid balance across all active/disbursed loans for a worker."""
+    rows = db_fetchall("""
+    SELECT amount, amount_repaid FROM financial_requests
+    WHERE worker_user_id = ? AND status IN ('APPROVED', 'DISBURSED')
+    """, (user_id,))
+    total = 0.0
+    for r in rows:
+        bal = float(r["amount"]) - float(r.get("amount_repaid") or 0.0)
+        if bal > 0:
+            total += bal
+    return total
+
+def list_pending_financial_requests() -> List[Dict[str, Any]]:
+    return db_fetchall("SELECT * FROM financial_requests WHERE status = 'PENDING' ORDER BY id ASC")
+
+def list_all_financial_requests(limit: int = 50) -> List[Dict[str, Any]]:
+    return db_fetchall("SELECT * FROM financial_requests ORDER BY id DESC LIMIT ?", (limit,))
+
+def get_financial_summary() -> Dict[str, Any]:
+    """Provides high-level financial summary metrics for managers."""
+    row_pending = db_fetchone("SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM financial_requests WHERE status = 'PENDING'")
+    row_approved = db_fetchone("SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total, COALESCE(SUM(amount_repaid), 0) as repaid FROM financial_requests WHERE status IN ('APPROVED', 'DISBURSED', 'REPAID')")
+    row_repaid = db_fetchone("SELECT COALESCE(SUM(amount), 0) as total FROM financial_repayments")
+
+    pending_count = row_pending["cnt"] if row_pending else 0
+    pending_amount = float(row_pending["total"]) if row_pending else 0.0
+
+    approved_amount = float(row_approved["total"]) if row_approved else 0.0
+    total_repaid = float(row_repaid["total"]) if row_repaid else 0.0
+    outstanding_balance = max(0.0, approved_amount - total_repaid)
+
+    return {
+        "pending_count": pending_count,
+        "pending_amount": pending_amount,
+        "total_disbursed_or_approved": approved_amount,
+        "total_repaid": total_repaid,
+        "outstanding_balance": outstanding_balance
+    }
+
+# --- Announcements & Broadcasting ---
+
+def save_announcement(admin_id: int, admin_name: str, title: Optional[str], message_text: str, photo_file_id: Optional[str] = None, sent_count: int = 0) -> int:
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return db_execute("""
+    INSERT INTO announcements (admin_id, admin_name, title, message_text, photo_file_id, timestamp, sent_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (admin_id, admin_name, title or "", message_text, photo_file_id, now_str, sent_count), returning_id=True)
+
+def list_recent_announcements(limit: int = 10) -> List[Dict[str, Any]]:
+    return db_fetchall("SELECT * FROM announcements ORDER BY id DESC LIMIT ?", (limit,))
 
 # Initialize tables on import
 init_db()

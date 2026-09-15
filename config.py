@@ -9,7 +9,8 @@ load_dotenv(BASE_DIR / ".env")
 
 # --- Telegram Bot Credentials ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8891345663:AAGdwG2CDqOPwXBou-reFvDWf8ZBsrMmwWM")
-SUPERGROUP_CHAT_ID = int(os.getenv("SUPERGROUP_CHAT_ID", "-1004307508548"))
+SUPERGROUP_CHAT_ID = int(os.getenv("SUPERGROUP_CHAT_ID", "0"))
+DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "ETB")
 
 # --- Admin Telegram User IDs (for access control & approvals) ---
 raw_admin_ids = os.getenv("ADMIN_IDS", "1602040402")
@@ -27,18 +28,16 @@ NIGHT_CUTOFF_MINUTE = int(os.getenv("NIGHT_CUTOFF_MINUTE", "0"))
 
 TIMEZONE_STR = os.getenv("TIMEZONE", "Africa/Addis_Ababa")
 
-# --- Telegram Supergroup Forum Topic Thread IDs ---
+# Default projects roster (no topics required in Bot-Only mode)
 DEFAULT_PROJECTS = {
-    "Project Alpha": int(os.getenv("TOPIC_PROJECT_ALPHA", "7")),
-    "Project Beta": int(os.getenv("TOPIC_PROJECT_BETA", "9")),
-    "Project Gamma": int(os.getenv("TOPIC_PROJECT_GAMMA", "10")),
+    "Project Alpha": 0,
+    "Project Beta": 0,
+    "Project Gamma": 0,
 }
 
-# Dedicated Topic for Material Requisitions
-MATERIALS_TOPIC_ID = int(os.getenv("TOPIC_MATERIALS", "13"))
-
-# Dedicated Topic for Urgent Alerts / Issues
-ISSUES_TOPIC_ID = int(os.getenv("TOPIC_ISSUES", "16"))
+# Dedicated Topic IDs (Legacy support if group is used)
+MATERIALS_TOPIC_ID = int(os.getenv("TOPIC_MATERIALS", "0"))
+ISSUES_TOPIC_ID = int(os.getenv("TOPIC_ISSUES", "0"))
 
 # --- Database & Storage ---
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
